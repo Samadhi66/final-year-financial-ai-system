@@ -1,11 +1,18 @@
 import pandas as pd
-from sklearn.ensemble import IsolationForest
 import joblib
 import os
 
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import (
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score
+)
+
 
 # -----------------------------
-# Load Processed Dataset
+# Load Dataset
 # -----------------------------
 
 data = pd.read_csv(
@@ -22,57 +29,93 @@ print(data.head())
 # -----------------------------
 
 features = [
-    "amount",
     "category",
     "merchant",
     "payment_method",
-    "location"
+    "location",
+    "month",
+    "day"
 ]
 
 
 X = data[features]
 
 
+# Target variable
+# Predict transaction amount
+
+y = data["amount"]
+
+
 # -----------------------------
-# Create Isolation Forest Model
+# Train Test Split
 # -----------------------------
 
-model = IsolationForest(
-    n_estimators=100,
-    contamination=0.05,
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
     random_state=42
 )
+
+
+# -----------------------------
+# Create Linear Regression Model
+# -----------------------------
+
+model = LinearRegression()
 
 
 # -----------------------------
 # Train Model
 # -----------------------------
 
-model.fit(X)
+model.fit(
+    X_train,
+    y_train
+)
+
+
+print("\nModel Training Completed")
 
 
 # -----------------------------
-# Predict Fraud
+# Prediction
 # -----------------------------
 
-data["fraud_prediction"] = model.predict(X)
+prediction = model.predict(
+    X_test
+)
 
 
-# Convert result
+# -----------------------------
+# Evaluation
+# -----------------------------
 
-# 1 = Normal
-# -1 = Fraud
-
-data["fraud_prediction"] = data[
-    "fraud_prediction"
-].replace({
-    1: 0,
-    -1: 1
-})
+mae = mean_absolute_error(
+    y_test,
+    prediction
+)
 
 
-print("\nFraud Prediction Result")
-print(data.head())
+mse = mean_squared_error(
+    y_test,
+    prediction
+)
+
+
+r2 = r2_score(
+    y_test,
+    prediction
+)
+
+
+print("\nModel Performance")
+print("----------------------")
+
+print("MAE :", mae)
+print("MSE :", mse)
+print("R2 Score :", r2)
 
 
 # -----------------------------
@@ -85,8 +128,8 @@ if not os.path.exists("models"):
 
 joblib.dump(
     model,
-    "models/fraud_model.pkl"
+    "models/prediction_model.pkl"
 )
 
 
-print("\nFraud Detection Model Saved Successfully!")
+print("\nPrediction Model Saved Successfully!")
