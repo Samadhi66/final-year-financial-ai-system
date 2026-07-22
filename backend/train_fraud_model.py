@@ -16,12 +16,13 @@ from sklearn.metrics import (
 # -----------------------------
 
 data = pd.read_csv(
-    "data/processed_transactions.csv"
+    "data/feature_engineered_transactions.csv"
 )
 
 
+
 print("Dataset Loaded")
-print(data.head())
+print(data.columns)
 
 
 # -----------------------------
@@ -29,12 +30,15 @@ print(data.head())
 # -----------------------------
 
 features = [
-    "category",
-    "merchant",
-    "payment_method",
-    "location",
-    "month",
-    "day"
+"category",
+"merchant",
+"payment_method",
+"location",
+"month",
+"day",
+"is_weekend",
+"category_avg_amount",
+"merchant_frequency"
 ]
 
 

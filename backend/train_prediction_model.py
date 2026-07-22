@@ -1,9 +1,10 @@
 import pandas as pd
-import joblib
 import os
+import joblib
 
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
+
 from sklearn.metrics import (
     mean_absolute_error,
     mean_squared_error,
@@ -11,12 +12,12 @@ from sklearn.metrics import (
 )
 
 
-# -----------------------------
-# Load Dataset
-# -----------------------------
+# --------------------------------
+# Load Feature Engineered Dataset
+# --------------------------------
 
 data = pd.read_csv(
-    "data/processed_transactions.csv"
+    "data/feature_engineered_transactions.csv"
 )
 
 
@@ -24,32 +25,46 @@ print("Dataset Loaded")
 print(data.head())
 
 
-# -----------------------------
+# --------------------------------
 # Select Features
-# -----------------------------
+# --------------------------------
 
 features = [
+
     "category",
     "merchant",
     "payment_method",
     "location",
+
+    "year",
     "month",
-    "day"
+    "day",
+
+    "is_weekend",
+
+    "category_avg_amount",
+
+    "merchant_frequency",
+
+    "payment_impact",
+
+
 ]
 
 
 X = data[features]
 
 
-# Target variable
-# Predict transaction amount
+# Target Variable
+# Predict Transaction Amount
 
 y = data["amount"]
 
 
-# -----------------------------
+
+# --------------------------------
 # Train Test Split
-# -----------------------------
+# --------------------------------
 
 X_train, X_test, y_train, y_test = train_test_split(
     X,
@@ -59,16 +74,18 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 
-# -----------------------------
+
+# --------------------------------
 # Create Linear Regression Model
-# -----------------------------
+# --------------------------------
 
 model = LinearRegression()
 
 
-# -----------------------------
+
+# --------------------------------
 # Train Model
-# -----------------------------
+# --------------------------------
 
 model.fit(
     X_train,
@@ -79,18 +96,20 @@ model.fit(
 print("\nModel Training Completed")
 
 
-# -----------------------------
+
+# --------------------------------
 # Prediction
-# -----------------------------
+# --------------------------------
 
 prediction = model.predict(
     X_test
 )
 
 
-# -----------------------------
-# Evaluation
-# -----------------------------
+
+# --------------------------------
+# Model Evaluation
+# --------------------------------
 
 mae = mean_absolute_error(
     y_test,
@@ -110,17 +129,21 @@ r2 = r2_score(
 )
 
 
+
 print("\nModel Performance")
 print("----------------------")
 
 print("MAE :", mae)
+
 print("MSE :", mse)
+
 print("R2 Score :", r2)
 
 
-# -----------------------------
+
+# --------------------------------
 # Save Model
-# -----------------------------
+# --------------------------------
 
 if not os.path.exists("models"):
     os.makedirs("models")

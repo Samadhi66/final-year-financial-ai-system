@@ -1,33 +1,81 @@
 import pandas as pd
 import random
-from datetime import datetime, timedelta
 import os
+from datetime import datetime, timedelta
 
 
-# -----------------------------
-# Dataset Configuration
-# -----------------------------
+# -------------------------------
+# Settings
+# -------------------------------
 
-start_date = datetime(2026, 1, 1)
-end_date = datetime(2026, 6, 30)
+number_of_transactions = 3000
+
+output_file = "data/transactions.csv"
+
+
+# -------------------------------
+# Dataset Values
+# -------------------------------
 
 categories = {
-    "Food": (500, 5000),
-    "Transport": (200, 3000),
-    "Shopping": (1000, 30000),
-    "Bills": (1000, 15000),
-    "Entertainment": (500, 10000),
-    "Healthcare": (1000, 20000)
+    "Food": {
+        "merchants": [
+            "KFC",
+            "Pizza Hut",
+            "Restaurant",
+            "Cafe"
+        ],
+        "amount": (500, 8000)
+    },
+
+    "Shopping": {
+        "merchants": [
+            "Amazon",
+            "Daraz",
+            "Fashion Store",
+            "Supermarket"
+        ],
+        "amount": (5000, 60000)
+    },
+
+    "Healthcare": {
+        "merchants": [
+            "Hospital",
+            "Pharmacy",
+            "Medical Center"
+        ],
+        "amount": (3000, 40000)
+    },
+
+    "Transport": {
+        "merchants": [
+            "Uber",
+            "PickMe",
+            "Bus",
+            "Taxi"
+        ],
+        "amount": (200, 8000)
+    },
+
+    "Entertainment": {
+        "merchants": [
+            "Netflix",
+            "Cinema",
+            "Gaming"
+        ],
+        "amount": (1000, 20000)
+    },
+
+    "Bills": {
+        "merchants": [
+            "Electricity",
+            "Water",
+            "Internet"
+        ],
+        "amount": (1000, 25000)
+    }
 }
 
-merchants = {
-    "Food": ["KFC", "Pizza Hut", "Cafe", "Restaurant"],
-    "Transport": ["Uber", "PickMe", "Bus", "Taxi"],
-    "Shopping": ["Daraz", "Amazon", "Fashion Store"],
-    "Bills": ["Electricity", "Water", "Internet"],
-    "Entertainment": ["Netflix", "Cinema", "Gaming"],
-    "Healthcare": ["Hospital", "Pharmacy"]
-}
 
 payment_methods = [
     "Cash",
@@ -35,115 +83,133 @@ payment_methods = [
     "Online Transfer"
 ]
 
+
 locations = [
     "Colombo",
     "Kandy",
-    "Galle",
     "Jaffna",
+    "Galle",
     "Kurunegala"
 ]
 
 
-# -----------------------------
-# Generate Transactions
-# -----------------------------
+# -------------------------------
+# Generate Dates
+# -------------------------------
 
-transactions = []
-
-transaction_id = 1
-
-current_date = start_date
+start_date = datetime(2026,1,1)
 
 
-while current_date <= end_date:
+data = []
 
-    # Daily transaction count
-    daily_transactions = random.randint(5, 10)
 
-    for i in range(daily_transactions):
+# -------------------------------
+# Create Transactions
+# -------------------------------
 
-        category = random.choice(list(categories.keys()))
+for i in range(1, number_of_transactions + 1):
 
-        amount_range = categories[category]
+    category = random.choice(
+        list(categories.keys())
+    )
 
-        amount = random.randint(
-            amount_range[0],
-            amount_range[1]
+
+    merchant = random.choice(
+        categories[category]["merchants"]
+    )
+
+
+    min_amount, max_amount = categories[category]["amount"]
+
+
+    amount = random.randint(
+        min_amount,
+        max_amount
+    )
+
+
+    payment_method = random.choice(
+        payment_methods
+    )
+
+
+    location = random.choice(
+        locations
+    )
+
+
+    transaction_date = (
+        start_date +
+        timedelta(
+            days=random.randint(0,179)
         )
-
-        fraud = 0
-
-
-        # Add abnormal transactions
-        if random.random() < 0.05:
-
-            amount = random.randint(50000, 300000)
-            fraud = 1
+    )
 
 
-        merchant = random.choice(
-            merchants[category]
-        )
+    # -------------------------------
+    # Fraud Logic
+    # -------------------------------
 
-        payment = random.choice(
-            payment_methods
-        )
-
-        location = random.choice(
-            locations
-        )
+    fraud_probability = 0.03
 
 
-        transactions.append([
-            transaction_id,
-            current_date.strftime("%Y-%m-%d"),
-            amount,
-            category,
-            merchant,
-            payment,
-            location,
-            fraud
-        ])
-
-        transaction_id += 1
+    if amount > 40000:
+        fraud_probability = 0.25
 
 
-    current_date += timedelta(days=1)
+    if payment_method == "Online Transfer":
+        fraud_probability += 0.05
 
 
+    is_fraud = (
+        1
+        if random.random() < fraud_probability
+        else 0
+    )
 
-# -----------------------------
+
+    data.append({
+
+        "transaction_id": i,
+
+        "date": transaction_date.strftime(
+            "%Y-%m-%d"
+        ),
+
+        "amount": amount,
+
+        "category": category,
+
+        "merchant": merchant,
+
+        "payment_method": payment_method,
+
+        "location": location,
+
+        "is_fraud": is_fraud
+
+    })
+
+
+# -------------------------------
 # Save Dataset
-# -----------------------------
+# -------------------------------
 
-columns = [
-    "transaction_id",
-    "date",
-    "amount",
-    "category",
-    "merchant",
-    "payment_method",
-    "location",
-    "is_fraud"
-]
+df = pd.DataFrame(data)
 
 
-df = pd.DataFrame(
-    transactions,
-    columns=columns
-)
+if not os.path.exists("data"):
+    os.makedirs("data")
 
-
-# Save to data folder
-
-output_path = "data/transactions.csv"
 
 df.to_csv(
-    output_path,
+    output_file,
     index=False
 )
 
 
 print("Dataset Generated Successfully!")
 print("Total Transactions:", len(df))
+
+print("\nSample Data:")
 print(df.head())
