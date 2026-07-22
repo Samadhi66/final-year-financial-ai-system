@@ -130,51 +130,44 @@ class FraudInput(BaseModel):
 @app.post("/detect_fraud")
 def detect_fraud(data: FraudInput):
 
-
-    # Same features used while training Isolation Forest
-
     input_data = pd.DataFrame(
-        [[
-            data.amount,
-            data.category,
-            data.merchant,
-            data.payment_method,
-            data.location
-        ]],
-        columns=[
+        [data.dict()]
+    )
+
+
+    # Correct feature order
+    input_data = input_data[
+        [
             "amount",
             "category",
             "merchant",
             "payment_method",
             "location"
         ]
-    )
+    ]
 
 
-    prediction = fraud_model.predict(
+    result = fraud_model.predict(
         input_data
     )
 
 
-
-    # =========================
-    # Explainability Logic
-    # =========================
-
     reasons = []
 
+
+    # Explainability Logic
 
     if data.amount > 30000:
 
         reasons.append(
-            "Transaction amount is unusually high"
+            "Transaction amount is unusually high compared with normal transactions"
         )
 
 
     if data.payment_method == 2:
 
         reasons.append(
-            "Online payment method requires additional verification"
+            "Payment method has higher risk behaviour"
         )
 
 
@@ -185,40 +178,40 @@ def detect_fraud(data: FraudInput):
         )
 
 
-
-    # =========================
-    # Final Fraud Decision
-    # =========================
-
-    if prediction[0] == -1:
-
+    if result[0] == -1:
 
         status = "Fraud Detected"
-
 
         if len(reasons) == 0:
 
             reasons.append(
-                "Unusual transaction pattern detected"
+                "Unusual transaction pattern detected by AI model"
             )
+
+
+        risk_level = "High"
 
 
     else:
 
-
         status = "Normal"
 
-        reasons = [
+        if len(reasons) == 0:
 
-            "Transaction behaviour matches normal patterns"
+            reasons.append(
+                "Transaction behaviour matches normal patterns"
+            )
 
-        ]
+
+        risk_level = "Low"
 
 
 
     return {
 
         "fraud_status": status,
+
+        "risk_level": risk_level,
 
         "risk_reasons": reasons
 
