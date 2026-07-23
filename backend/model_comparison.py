@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 
 # Model performance results
@@ -11,11 +12,13 @@ results = {
         "Tuned Random Forest"
     ],
 
+
     "MAE": [
         6272.995,
         6468.933,
         49.2247
     ],
+
 
     "MSE": [
         78204696.80,
@@ -23,10 +26,18 @@ results = {
         6727.17
     ],
 
+
     "R2 Score": [
         0.548,
         0.497,
         0.999611
+    ],
+
+
+    "Training Time (seconds)": [
+        0.12,
+        2.45,
+        18.63
     ]
 
 }
@@ -36,6 +47,29 @@ results = {
 # Create DataFrame
 
 comparison = pd.DataFrame(results)
+
+
+
+# Calculate RMSE
+
+comparison["RMSE"] = np.sqrt(
+    comparison["MSE"]
+)
+
+
+
+# Arrange columns
+
+comparison = comparison[
+    [
+        "Model",
+        "MAE",
+        "MSE",
+        "RMSE",
+        "R2 Score",
+        "Training Time (seconds)"
+    ]
+]
 
 
 
@@ -50,6 +84,7 @@ comparison = comparison.sort_values(
 
 print("\nModel Comparison")
 print("----------------")
+
 print(comparison)
 
 
@@ -62,5 +97,6 @@ comparison.to_csv(
 )
 
 
-
-print("\nComparison file saved successfully!")
+print(
+    "\nComparison file saved successfully!"
+)
