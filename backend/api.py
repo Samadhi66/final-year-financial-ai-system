@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
 import pandas as pd
@@ -14,17 +15,29 @@ app = FastAPI(
         "Smart Budget Prediction and "
         "Behavioral Fraud Detection API"
     ),
-    version="2.1"
+    version="2.2"
 )
 
 
 # ============================================================
-# 2. LOAD TRAINED MODELS
+# 2. CORS CONFIGURATION
 # ============================================================
 
-# ------------------------------------------------------------
-# Legacy Amount Prediction Model
-# ------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================
+# 3. LOAD LEGACY AMOUNT PREDICTION MODEL
+# ============================================================
 
 try:
 
@@ -51,9 +64,9 @@ except Exception as error:
     )
 
 
-# ------------------------------------------------------------
-# Final Smart Budget Prediction Model
-# ------------------------------------------------------------
+# ============================================================
+# 4. LOAD FINAL BUDGET PREDICTION MODEL
+# ============================================================
 
 try:
 
@@ -86,9 +99,9 @@ except Exception as error:
     )
 
 
-# ------------------------------------------------------------
-# Final Fraud Detection Model
-# ------------------------------------------------------------
+# ============================================================
+# 5. LOAD FINAL FRAUD DETECTION MODEL
+# ============================================================
 
 try:
 
@@ -131,7 +144,7 @@ except Exception as error:
 
 
 # ============================================================
-# 3. HOME ENDPOINT
+# 6. HOME ENDPOINT
 # ============================================================
 
 @app.get("/")
@@ -146,17 +159,18 @@ def home():
             "AI-Powered Financial Intelligence System",
 
         "version":
-            "2.1",
+            "2.2",
 
         "modules": [
             "Smart Budget Prediction",
-            "Behavioral Fraud Detection"
+            "Behavioral Fraud Detection",
+            "Amount Prediction"
         ]
     }
 
 
 # ============================================================
-# 4. LEGACY AMOUNT PREDICTION INPUT
+# 7. LEGACY AMOUNT PREDICTION INPUT
 # ============================================================
 
 class PredictionInput(BaseModel):
@@ -177,7 +191,7 @@ class PredictionInput(BaseModel):
 
 
 # ============================================================
-# 5. LEGACY AMOUNT PREDICTION ENDPOINT
+# 8. LEGACY AMOUNT PREDICTION ENDPOINT
 # ============================================================
 
 @app.post("/predict_amount")
@@ -206,7 +220,6 @@ def predict_amount(
             ]
         )
 
-
         input_data = input_data[
             [
                 "category",
@@ -222,11 +235,9 @@ def predict_amount(
             ]
         ]
 
-
         prediction = prediction_model.predict(
             input_data
         )
-
 
         return {
 
@@ -241,7 +252,6 @@ def predict_amount(
                     2
                 )
         }
-
 
     except Exception as error:
 
@@ -260,45 +270,38 @@ def predict_amount(
 
 
 # ============================================================
-# 6. SMART BUDGET PREDICTION INPUT
+# 9. SMART BUDGET PREDICTION INPUT
 # ============================================================
 
 class BudgetPredictionInput(BaseModel):
 
-    # Seasonal information
     week_sin: float
     week_cos: float
 
-    # Current week
     current_week_spending: float
 
-    # Historical spending
     spending_1_week_ago: float
     spending_2_weeks_ago: float
     spending_3_weeks_ago: float
     spending_4_weeks_ago: float
 
-    # Rolling averages
     previous_2_week_avg: float
     previous_4_week_avg: float
     previous_8_week_avg: float
 
-    # Current transaction behaviour
     current_transaction_count: int
     current_avg_transaction_amount: float
     current_fraud_count: int
 
-    # Previous transaction behaviour
     previous_transaction_count: int
     previous_avg_transaction_amount: float
 
-    # Spending trend
     spending_change: float
     spending_change_percentage: float
 
 
 # ============================================================
-# 7. SMART BUDGET PREDICTION ENDPOINT
+# 10. SMART BUDGET PREDICTION ENDPOINT
 # ============================================================
 
 @app.post("/predict_budget")
@@ -326,24 +329,20 @@ def predict_budget(
 
         input_dict = data.model_dump()
 
-
         input_data = pd.DataFrame(
             [
                 input_dict
             ]
         )
 
-
-        # Keep exact training feature order
+        # Match exact training feature order
         input_data = input_data[
             budget_features
         ]
 
-
         prediction = budget_model.predict(
             input_data
         )
-
 
         predicted_budget = round(
             float(
@@ -352,22 +351,15 @@ def predict_budget(
             2
         )
 
-
         current_spending = (
             data.current_week_spending
         )
-
 
         difference = (
             predicted_budget
             -
             current_spending
         )
-
-
-        # ----------------------------------------------------
-        # Calculate percentage difference
-        # ----------------------------------------------------
 
         if current_spending == 0:
 
@@ -390,10 +382,6 @@ def predict_budget(
                 100
             )
 
-
-        # ----------------------------------------------------
-        # Generate explanation
-        # ----------------------------------------------------
 
         if difference > 0:
 
@@ -492,7 +480,7 @@ def predict_budget(
 
 
 # ============================================================
-# 8. FRAUD DETECTION INPUT
+# 11. FRAUD DETECTION INPUT
 # ============================================================
 
 class FraudInput(BaseModel):
@@ -506,7 +494,7 @@ class FraudInput(BaseModel):
 
 
 # ============================================================
-# 9. FRAUD DETECTION ENDPOINT
+# 12. FRAUD DETECTION ENDPOINT
 # ============================================================
 
 @app.post("/detect_fraud")
@@ -540,10 +528,6 @@ def detect_fraud(
 
     try:
 
-        # ----------------------------------------------------
-        # Basic API Input
-        # ----------------------------------------------------
-
         input_data = pd.DataFrame(
             [
                 data.model_dump()
@@ -551,51 +535,31 @@ def detect_fraud(
         )
 
 
-        # ----------------------------------------------------
-        # Temporary Behavioral Context
-        # ----------------------------------------------------
-        # These values will later be calculated automatically
-        # from the user's transaction history/database.
-        # For the current API prototype, controlled values
-        # are supplied here so the trained model receives
-        # the same feature structure used during training.
-        # ----------------------------------------------------
-
+        # Temporary behavioral context
         input_data["month"] = 8
-
         input_data["day"] = 20
-
         input_data["is_weekend"] = 0
-
 
         input_data[
             "category_avg_amount"
         ] = data.amount
 
-
         input_data[
             "merchant_frequency"
         ] = 10
-
 
         input_data[
             "payment_impact"
         ] = 1.0
 
 
-        # ----------------------------------------------------
         # Match exact training feature order
-        # ----------------------------------------------------
-
         input_data = input_data[
             fraud_features
         ]
 
 
-        # ----------------------------------------------------
-        # Calculate Fraud Probability
-        # ----------------------------------------------------
-
+        # Calculate fraud probability
         fraud_probability = (
             fraud_model
             .predict_proba(
@@ -604,21 +568,13 @@ def detect_fraud(
         )
 
 
-        # ----------------------------------------------------
-        # Apply Optimized Threshold
-        # ----------------------------------------------------
-
+        # Apply optimized threshold
         fraud_prediction = int(
-
             fraud_probability
             >=
             fraud_threshold
         )
 
-
-        # ----------------------------------------------------
-        # Explainability
-        # ----------------------------------------------------
 
         reasons = []
 
@@ -647,16 +603,11 @@ def detect_fraud(
             )
 
 
-        # ----------------------------------------------------
-        # Risk Decision
-        # ----------------------------------------------------
-
         if fraud_prediction == 1:
 
             fraud_status = (
                 "Fraud Detected"
             )
-
 
             if fraud_probability >= 0.70:
 
@@ -681,7 +632,6 @@ def detect_fraud(
 
             risk_level = "Low"
 
-
             if len(reasons) == 0:
 
                 reasons.append(
@@ -689,10 +639,6 @@ def detect_fraud(
                     "normal spending patterns."
                 )
 
-
-        # ----------------------------------------------------
-        # Final Response
-        # ----------------------------------------------------
 
         return {
 
@@ -753,7 +699,7 @@ def detect_fraud(
 
 
 # ============================================================
-# 10. MODEL INFORMATION ENDPOINT
+# 13. MODEL INFORMATION ENDPOINT
 # ============================================================
 
 @app.get("/model_info")
@@ -763,10 +709,6 @@ def model_info():
 
         "system":
             "AI-Powered Financial Intelligence System",
-
-        # ----------------------------------------------------
-        # Budget Prediction Information
-        # ----------------------------------------------------
 
         "budget_prediction": {
 
@@ -799,10 +741,6 @@ def model_info():
                 )
         },
 
-
-        # ----------------------------------------------------
-        # Fraud Detection Information
-        # ----------------------------------------------------
 
         "fraud_detection": {
 
@@ -847,10 +785,6 @@ def model_info():
                 True
         },
 
-
-        # ----------------------------------------------------
-        # Legacy Amount Prediction Information
-        # ----------------------------------------------------
 
         "legacy_amount_prediction": {
 

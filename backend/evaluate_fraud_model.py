@@ -29,7 +29,7 @@ print(data.head())
 # =========================
 
 fraud_model = joblib.load(
-    "models/fraud_model.pkl"
+    "../models/fraud_model.pkl"
 )
 
 
