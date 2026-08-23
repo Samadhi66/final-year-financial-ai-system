@@ -37,7 +37,7 @@ app = FastAPI(
         "Smart Budget Prediction, Behavioral Fraud Detection, "
         "Amount Prediction, Receipt OCR and Transaction Management API"
     ),
-    version="2.4",
+    version="2.5",
 )
 
 
@@ -224,6 +224,56 @@ class TransactionInput(BaseModel):
     raw_ocr_text: str | None = None
 
 
+class AutoFraudTransactionInput(BaseModel):
+    amount: float
+    category: str
+    merchant: str
+    payment_method: int = 0
+    location: int = 0
+
+
+# ============================================================
+# FRAUD ENCODING HELPERS
+# ============================================================
+
+def category_to_code(category: str) -> int:
+    category_map = {
+        "food & dining": 1,
+        "groceries": 2,
+        "transport": 3,
+        "shopping": 4,
+        "utilities": 5,
+        "entertainment": 6,
+        "healthcare": 7,
+        "education": 8,
+        "travel": 9,
+        "other": 0,
+    }
+
+    return category_map.get(
+        str(category).strip().lower(),
+        0,
+    )
+
+
+def merchant_to_code(merchant: str) -> int:
+    """
+    Convert merchant name into a stable numeric code.
+    The same merchant name always produces the same code.
+
+    IMPORTANT:
+    This encoding should be aligned with the merchant encoding
+    used during model training for production-quality predictions.
+    """
+
+    merchant = str(merchant).strip().lower()
+
+    if not merchant:
+        return 0
+
+    return sum(ord(char) for char in merchant) % 100
+
+
 # ============================================================
 # 8. HOME ENDPOINT
 # ============================================================
@@ -233,13 +283,14 @@ def home():
     return {
         "message": "Financial AI API Running",
         "system": "AI-Powered Financial Intelligence System",
-        "version": "2.4",
+        "version": "2.5",
         "modules": [
             "Smart Budget Prediction",
             "Behavioral Fraud Detection",
             "Amount Prediction",
             "Receipt OCR Expense Entry",
             "Transaction Management",
+            "Automatic Fraud Analysis",
         ],
     }
 
@@ -542,7 +593,107 @@ def detect_fraud(data: FraudInput):
 
 
 # ============================================================
-# 12. RECEIPT OCR ENDPOINT
+# 12. AUTOMATIC FRAUD DETECTION FOR SAVED/OCR TRANSACTIONS
+# ============================================================
+
+@app.post("/auto_detect_fraud")
+def auto_detect_fraud(
+    data: AutoFraudTransactionInput
+):
+    try:
+        category_code = category_to_code(
+            data.category
+        )
+
+        merchant_code = merchant_to_code(
+            data.merchant
+        )
+
+        fraud_input = FraudInput(
+            amount=data.amount,
+            category=category_code,
+            merchant=merchant_code,
+            payment_method=data.payment_method,
+            location=data.location,
+        )
+
+        result = detect_fraud(
+            fraud_input
+        )
+
+        if result.get("status") in {
+            "Error",
+            "Unavailable",
+        }:
+            return {
+                "status": result.get(
+                    "status",
+                    "Error",
+                ),
+                "message": (
+                    "Automatic fraud analysis "
+                    "could not be completed."
+                ),
+                "transaction": {
+                    "amount": data.amount,
+                    "category": data.category,
+                    "merchant": data.merchant,
+                    "payment_method":
+                        data.payment_method,
+                    "location":
+                        data.location,
+                },
+                "encoded_features": {
+                    "category":
+                        category_code,
+                    "merchant":
+                        merchant_code,
+                },
+                "fraud_analysis":
+                    result,
+            }
+
+        return {
+            "status": "Success",
+            "message": (
+                "Automatic fraud analysis "
+                "completed successfully."
+            ),
+            "transaction": {
+                "amount": data.amount,
+                "category": data.category,
+                "merchant": data.merchant,
+                "payment_method":
+                    data.payment_method,
+                "location":
+                    data.location,
+            },
+            "encoded_features": {
+                "category":
+                    category_code,
+                "merchant":
+                    merchant_code,
+            },
+            "fraud_analysis":
+                result,
+        }
+
+    except Exception as error:
+        print(
+            "Automatic fraud analysis error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Automatic fraud analysis failed."
+            ),
+        )
+
+
+# ============================================================
+# 13. RECEIPT OCR ENDPOINT
 # ============================================================
 
 @app.post("/ocr_receipt")
@@ -684,7 +835,7 @@ async def ocr_receipt(
 
 
 # ============================================================
-# 13. CREATE / SAVE TRANSACTION
+# 14. CREATE / SAVE TRANSACTION
 # ============================================================
 
 @app.post("/transactions")
@@ -762,7 +913,7 @@ def create_transaction(
 
 
 # ============================================================
-# 14. GET ALL TRANSACTIONS
+# 15. GET ALL TRANSACTIONS
 # ============================================================
 
 @app.get("/transactions")
@@ -793,7 +944,7 @@ def list_transactions():
 
 
 # ============================================================
-# 15. GET LATEST TRANSACTION
+# 16. GET LATEST TRANSACTION
 # ============================================================
 
 @app.get("/transactions/latest")
@@ -823,7 +974,62 @@ def latest_transaction():
 
 
 # ============================================================
-# 16. TRANSACTION SUMMARY
+# 17. LATEST TRANSACTION FRAUD ANALYSIS
+# ============================================================
+
+@app.get("/transactions/latest/fraud")
+def latest_transaction_fraud():
+    try:
+        latest = get_latest_transaction()
+
+        if not latest:
+            return {
+                "status": "Success",
+                "has_transaction": False,
+                "transaction": None,
+                "fraud_analysis": None,
+            }
+
+        auto_input = AutoFraudTransactionInput(
+            amount=float(latest.get("amount", 0)),
+            category=str(latest.get("category", "Other")),
+            merchant=str(latest.get("merchant", "Unknown")),
+            payment_method=0,
+            location=0,
+        )
+
+        result = auto_detect_fraud(auto_input)
+
+        return {
+            "status": "Success",
+            "has_transaction": True,
+            "transaction_id": latest.get("id"),
+            "transaction": latest,
+            "encoded_features": result.get(
+                "encoded_features"
+            ),
+            "fraud_analysis": result.get(
+                "fraud_analysis"
+            ),
+        }
+
+    except Exception as error:
+        print(
+            "Latest transaction fraud analysis error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Latest transaction fraud analysis "
+                "could not be completed."
+            ),
+        )
+
+
+# ============================================================
+# 18. TRANSACTION SUMMARY
 # ============================================================
 
 @app.get("/transactions/summary")
@@ -853,7 +1059,7 @@ def transaction_summary():
 
 
 # ============================================================
-# 17. MODEL INFORMATION ENDPOINT
+# 19. MODEL INFORMATION ENDPOINT
 # ============================================================
 
 @app.get("/model_info")
