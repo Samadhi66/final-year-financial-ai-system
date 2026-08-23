@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
 /* =========================================================
@@ -158,6 +158,49 @@ function App() {
 
   const [amountValidation, setAmountValidation] =
     useState({});
+
+  /* =======================================================
+     LIVE TRANSACTION DASHBOARD STATE
+     ======================================================= */
+
+  const [transactionSummary, setTransactionSummary] =
+    useState({
+      transaction_count: 0,
+      total_spending: 0,
+      average_amount: 0,
+    });
+
+  const [recentTransactions, setRecentTransactions] =
+    useState([]);
+
+  const [latestSavedTransaction, setLatestSavedTransaction] =
+    useState(null);
+
+  const [transactionDashboardLoading, setTransactionDashboardLoading] =
+    useState(false);
+
+  const [transactionDashboardError, setTransactionDashboardError] =
+    useState("");
+
+  /* =======================================================
+     RECEIPT OCR STATE
+     ======================================================= */
+
+  const [ocrFile, setOcrFile] = useState(null);
+  const [ocrPreview, setOcrPreview] = useState("");
+  const [ocrResult, setOcrResult] = useState(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [ocrError, setOcrError] = useState("");
+  const [ocrConfirmed, setOcrConfirmed] = useState(false);
+  const [transactionSaving, setTransactionSaving] = useState(false);
+  const [savedTransaction, setSavedTransaction] = useState(null);
+
+  const [ocrForm, setOcrForm] = useState({
+    merchant: "",
+    amount: "",
+    date: "",
+    suggested_category: "",
+  });
 
   /* =======================================================
      INPUT CHANGE HANDLERS
@@ -818,6 +861,286 @@ function App() {
   };
 
   /* =======================================================
+     LIVE TRANSACTION DASHBOARD API
+     ======================================================= */
+
+  const loadTransactionDashboard = async () => {
+    setTransactionDashboardLoading(true);
+    setTransactionDashboardError("");
+
+    try {
+      const [
+        summaryResponse,
+        transactionsResponse,
+        latestResponse,
+      ] = await Promise.all([
+        fetch(
+          "http://127.0.0.1:8000/transactions/summary"
+        ),
+        fetch(
+          "http://127.0.0.1:8000/transactions"
+        ),
+        fetch(
+          "http://127.0.0.1:8000/transactions/latest"
+        ),
+      ]);
+
+      if (
+        !summaryResponse.ok ||
+        !transactionsResponse.ok ||
+        !latestResponse.ok
+      ) {
+        throw new Error(
+          "Transaction dashboard data could not be loaded."
+        );
+      }
+
+      const summaryData =
+        await summaryResponse.json();
+
+      const transactionsData =
+        await transactionsResponse.json();
+
+      const latestData =
+        await latestResponse.json();
+
+      if (
+        summaryData.status !== "Success" ||
+        transactionsData.status !== "Success" ||
+        latestData.status !== "Success"
+      ) {
+        throw new Error(
+          "Transaction dashboard data is unavailable."
+        );
+      }
+
+      setTransactionSummary({
+        transaction_count:
+          Number(
+            summaryData.transaction_count
+          ) || 0,
+
+        total_spending:
+          Number(
+            summaryData.total_spending
+          ) || 0,
+
+        average_amount:
+          Number(
+            summaryData.average_amount
+          ) || 0,
+      });
+
+      setRecentTransactions(
+        Array.isArray(
+          transactionsData.transactions
+        )
+          ? transactionsData.transactions
+          : []
+      );
+
+      setLatestSavedTransaction(
+        latestData.transaction || null
+      );
+    } catch (error) {
+      console.error(error);
+
+      setTransactionDashboardError(
+        "Saved transaction data could not be loaded. Please check that the FastAPI server is running."
+      );
+    } finally {
+      setTransactionDashboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTransactionDashboard();
+  }, []);
+
+  useEffect(() => {
+    if (activePage === "dashboard") {
+      loadTransactionDashboard();
+    }
+  }, [activePage]);
+
+  /* =======================================================
+     RECEIPT OCR API
+     ======================================================= */
+
+  const handleOcrFileChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    setOcrFile(file);
+    setOcrResult(null);
+    setOcrError("");
+    setOcrConfirmed(false);
+    setSavedTransaction(null);
+
+    if (ocrPreview) URL.revokeObjectURL(ocrPreview);
+    setOcrPreview(file ? URL.createObjectURL(file) : "");
+  };
+
+  const handleOcrFieldChange = (event) => {
+    const { name, value } = event.target;
+    setOcrForm((previous) => ({ ...previous, [name]: value }));
+    setOcrConfirmed(false);
+    setSavedTransaction(null);
+  };
+
+  const handleReceiptScan = async (event) => {
+    event.preventDefault();
+    setOcrError("");
+    setOcrConfirmed(false);
+
+    if (!ocrFile) {
+      setOcrError("Please select a receipt image before scanning.");
+      return;
+    }
+
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(ocrFile.type)) {
+      setOcrError("Please upload a JPG, PNG or WEBP image.");
+      return;
+    }
+
+    if (ocrFile.size > 10 * 1024 * 1024) {
+      setOcrError("Receipt image must be 10 MB or smaller.");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", ocrFile);
+
+    setOcrLoading(true);
+    setOcrResult(null);
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/ocr_receipt",
+        { method: "POST", body: formData }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail || result.message || `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status === "Error" || result.status === "Unavailable") {
+        throw new Error(
+          result.error || result.message || "Receipt OCR failed"
+        );
+      }
+
+      setOcrResult(result);
+      setOcrForm({
+        merchant: result.merchant ?? "",
+        amount:
+          result.amount !== null && result.amount !== undefined
+            ? String(result.amount)
+            : "",
+        date: result.date ?? "",
+        suggested_category: result.suggested_category ?? "",
+      });
+    } catch (error) {
+      console.error(error);
+      setOcrError(
+        error.message ||
+          "Receipt scanning could not be completed. Please check that the FastAPI server is running."
+      );
+    } finally {
+      setOcrLoading(false);
+    }
+  };
+
+  const handleConfirmReceipt = async () => {
+    if (
+      !ocrForm.merchant.trim() ||
+      !ocrForm.amount ||
+      !ocrForm.date.trim() ||
+      !ocrForm.suggested_category.trim()
+    ) {
+      setOcrError(
+        "Please review and complete the extracted receipt details before confirming."
+      );
+      return;
+    }
+
+    if (
+      !Number.isFinite(Number(ocrForm.amount)) ||
+      Number(ocrForm.amount) <= 0
+    ) {
+      setOcrError(
+        "Receipt amount must be a valid value greater than 0."
+      );
+      return;
+    }
+
+    const payload = {
+      merchant: ocrForm.merchant.trim(),
+      amount: Number(ocrForm.amount),
+      transaction_date: ocrForm.date.trim(),
+      category: ocrForm.suggested_category.trim(),
+      source: "OCR",
+      raw_ocr_text: ocrResult?.raw_text || "",
+    };
+
+    setOcrError("");
+    setOcrConfirmed(false);
+    setSavedTransaction(null);
+    setTransactionSaving(true);
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/transactions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            "Transaction could not be saved."
+        );
+      }
+
+      setSavedTransaction({
+        ...payload,
+        transaction_id: result.transaction_id,
+      });
+
+      setOcrConfirmed(true);
+
+      await loadTransactionDashboard();
+    } catch (error) {
+      console.error(error);
+
+      setOcrError(
+        error.message ||
+          "Transaction could not be saved. Please check that the FastAPI server is running."
+      );
+    } finally {
+      setTransactionSaving(false);
+    }
+  };
+
+  /* =======================================================
      DASHBOARD
      ======================================================= */
 
@@ -839,6 +1162,42 @@ function App() {
       amountResult?.predicted_amount ??
       null;
 
+    const categoryTotals =
+      recentTransactions.reduce(
+        (totals, transaction) => {
+          const category =
+            transaction.category ||
+            "Other";
+
+          totals[category] =
+            (totals[category] || 0) +
+            Number(
+              transaction.amount || 0
+            );
+
+          return totals;
+        },
+        {}
+      );
+
+    const topCategoryEntry =
+      Object.entries(categoryTotals).sort(
+        (a, b) => b[1] - a[1]
+      )[0] || null;
+
+    const topCategory =
+      topCategoryEntry
+        ? topCategoryEntry[0]
+        : "No data";
+
+    const topCategoryAmount =
+      topCategoryEntry
+        ? topCategoryEntry[1]
+        : 0;
+
+    const dashboardTransactions =
+      recentTransactions.slice(0, 5);
+
     return (
       <>
         <header>
@@ -852,15 +1211,14 @@ function App() {
             </h1>
 
             <p className="subtitle">
-              Unified view of smart budget
-              forecasts, transaction estimates
-              and behavioral fraud risk.
+              Unified view of AI predictions and
+              live saved transaction intelligence.
             </p>
           </div>
 
           <div className="system-status">
             <span className="status-dot"></span>
-            All AI Models Active
+            AI & Transaction System Active
           </div>
         </header>
 
@@ -868,92 +1226,82 @@ function App() {
           <div
             className="kpi-card"
             onClick={() =>
-              setActivePage("budget")
+              setActivePage("ocr")
             }
           >
             <div className="kpi-top">
               <span className="kpi-icon">
-                ◈
+                Rs
               </span>
 
               <span className="kpi-label">
-                Next Week Forecast
+                Total Saved Spending
               </span>
             </div>
 
             <h3>
-              {latestBudget !== null
-                ? `Rs. ${Number(
-                    latestBudget
-                  ).toLocaleString()}`
-                : "No prediction"}
+              Rs.{" "}
+              {Number(
+                transactionSummary.total_spending
+              ).toLocaleString()}
             </h3>
 
             <p>
-              {budgetResult
-                ? budgetResult.trend
-                : "Run budget prediction"}
+              {transactionSummary.transaction_count}
+              {" "}
+              saved transaction
+              {transactionSummary.transaction_count === 1
+                ? ""
+                : "s"}
             </p>
           </div>
 
-          <div
-            className="kpi-card"
-            onClick={() =>
-              setActivePage("fraud")
-            }
-          >
+          <div className="kpi-card">
             <div className="kpi-top">
               <span className="kpi-icon">
-                ◎
+                #
               </span>
 
               <span className="kpi-label">
-                Fraud Risk
+                Average Expense
               </span>
             </div>
 
             <h3>
-              {latestFraudProbability !==
-              null
-                ? `${(
-                    Number(
-                      latestFraudProbability
-                    ) * 100
-                  ).toFixed(1)}%`
-                : "No analysis"}
+              Rs.{" "}
+              {Number(
+                transactionSummary.average_amount
+              ).toLocaleString()}
             </h3>
 
             <p>
-              {latestFraudStatus}
+              Average saved transaction amount
             </p>
           </div>
 
-          <div
-            className="kpi-card"
-            onClick={() =>
-              setActivePage("amount")
-            }
-          >
+          <div className="kpi-card">
             <div className="kpi-top">
               <span className="kpi-icon">
                 ↗
               </span>
 
               <span className="kpi-label">
-                Predicted Amount
+                Latest Expense
               </span>
             </div>
 
             <h3>
-              {latestAmount !== null
+              {latestSavedTransaction
                 ? `Rs. ${Number(
-                    latestAmount
+                    latestSavedTransaction.amount
                   ).toLocaleString()}`
-                : "No estimate"}
+                : "No expense"}
             </h3>
 
             <p>
-              Smart transaction estimate
+              {latestSavedTransaction
+                ? latestSavedTransaction.merchant
+                : "Save a receipt transaction"}
             </p>
           </div>
 
@@ -964,21 +1312,204 @@ function App() {
               </span>
 
               <span className="kpi-label">
-                Model Health
+                Top Category
               </span>
             </div>
 
             <h3>
-              3 / 3 Active
+              {topCategory}
             </h3>
 
             <p>
-              All prediction services available
+              {topCategoryEntry
+                ? `Rs. ${Number(
+                    topCategoryAmount
+                  ).toLocaleString()} recorded`
+                : "No saved category data"}
             </p>
           </div>
         </section>
 
+        {transactionDashboardError && (
+          <div
+            className="error-box"
+            style={{
+              marginBottom: "20px",
+            }}
+          >
+            {transactionDashboardError}
+          </div>
+        )}
+
         <section className="dashboard-grid">
+          <div className="dashboard-panel">
+            <div className="panel-heading">
+              <p className="eyebrow">
+                LIVE TRANSACTION DATA
+              </p>
+
+              <h2>
+                Recent Saved Expenses
+              </h2>
+            </div>
+
+            {transactionDashboardLoading ? (
+              <div
+                className="explanation-box"
+              >
+                <span>
+                  Loading
+                </span>
+
+                <p>
+                  Loading transaction data...
+                </p>
+              </div>
+            ) : dashboardTransactions.length ===
+              0 ? (
+              <div
+                className="explanation-box"
+              >
+                <span>
+                  No Transactions
+                </span>
+
+                <p>
+                  Scan and save a receipt to
+                  populate the live dashboard.
+                </p>
+              </div>
+            ) : (
+              <div className="model-status-list">
+                {dashboardTransactions.map(
+                  (transaction) => (
+                    <div
+                      key={transaction.id}
+                    >
+                      <span>
+                        <strong>
+                          {transaction.merchant}
+                        </strong>
+                        {" · "}
+                        {transaction.category}
+                        {" · "}
+                        {transaction.transaction_date}
+                      </span>
+
+                      <strong>
+                        Rs.{" "}
+                        {Number(
+                          transaction.amount
+                        ).toLocaleString()}
+                      </strong>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+
+            <div
+              className="system-score"
+              style={{
+                marginTop: "20px",
+              }}
+            >
+              <span>
+                Transactions Stored
+              </span>
+
+              <strong>
+                {
+                  transactionSummary.transaction_count
+                }
+              </strong>
+            </div>
+          </div>
+
+          <div className="dashboard-panel system-panel">
+            <p className="eyebrow">
+              AI DECISION SUPPORT
+            </p>
+
+            <h2>
+              Current AI Insights
+            </h2>
+
+            <div className="model-status-list">
+              <div>
+                <span>
+                  Budget Forecast
+                </span>
+
+                <strong>
+                  {latestBudget !== null
+                    ? `Rs. ${Number(
+                        latestBudget
+                      ).toLocaleString()}`
+                    : "Not run"}
+                </strong>
+              </div>
+
+              <div>
+                <span>
+                  Fraud Risk
+                </span>
+
+                <strong>
+                  {latestFraudProbability !==
+                  null
+                    ? `${(
+                        Number(
+                          latestFraudProbability
+                        ) * 100
+                      ).toFixed(1)}%`
+                    : "Not run"}
+                </strong>
+              </div>
+
+              <div>
+                <span>
+                  Fraud Decision
+                </span>
+
+                <strong>
+                  {latestFraudStatus}
+                </strong>
+              </div>
+
+              <div>
+                <span>
+                  Predicted Amount
+                </span>
+
+                <strong>
+                  {latestAmount !== null
+                    ? `Rs. ${Number(
+                        latestAmount
+                      ).toLocaleString()}`
+                    : "Not run"}
+                </strong>
+              </div>
+            </div>
+
+            <div className="system-score">
+              <span>
+                Integrated Services
+              </span>
+
+              <strong>
+                4 / 4
+              </strong>
+            </div>
+          </div>
+        </section>
+
+        <section
+          className="dashboard-grid"
+          style={{
+            marginTop: "20px",
+          }}
+        >
           <div className="dashboard-panel">
             <div className="panel-heading">
               <p className="eyebrow">
@@ -1042,15 +1573,15 @@ function App() {
 
                 <div>
                   <strong>
-                    Transaction Estimate
+                    Latest Saved Expense
                   </strong>
 
                   <p>
-                    {amountResult
-                      ? `Expected transaction amount is approximately Rs. ${Number(
-                          amountResult.predicted_amount
-                        ).toLocaleString()}.`
-                      : "Run amount prediction to generate a smart transaction estimate."}
+                    {latestSavedTransaction
+                      ? `${latestSavedTransaction.merchant}: Rs. ${Number(
+                          latestSavedTransaction.amount
+                        ).toLocaleString()} in ${latestSavedTransaction.category}.`
+                      : "No saved expense is currently available."}
                   </p>
                 </div>
               </div>
@@ -1063,7 +1594,7 @@ function App() {
             </p>
 
             <h2>
-              AI Model Status
+              Integrated Services
             </h2>
 
             <div className="model-status-list">
@@ -1096,11 +1627,21 @@ function App() {
                   Online
                 </strong>
               </div>
+
+              <div>
+                <span>
+                  EasyOCR + SQLite
+                </span>
+
+                <strong className="online-text">
+                  Online
+                </strong>
+              </div>
             </div>
 
             <div className="system-score">
               <span>
-                Integrated AI Services
+                Live Transaction Integration
               </span>
 
               <strong>
@@ -2311,6 +2852,206 @@ function App() {
   };
 
   /* =======================================================
+     RECEIPT OCR PAGE
+     ======================================================= */
+
+  const renderReceiptOcr = () => {
+    return (
+      <>
+        <header>
+          <div>
+            <p className="eyebrow">AI-POWERED RECEIPT PROCESSING</p>
+            <h1>Receipt OCR</h1>
+            <p className="subtitle">
+              Upload a receipt image, extract transaction information with
+              EasyOCR, review the detected values and confirm the expense.
+            </p>
+          </div>
+
+          <div className="system-status">
+            <span className="status-dot"></span>
+            EasyOCR Ready
+          </div>
+        </header>
+
+        <div className="prediction-layout">
+          <section className="prediction-form-card">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">RECEIPT INPUT</p>
+                <h2>Scan Receipt</h2>
+              </div>
+              <span className="model-chip">EasyOCR</span>
+            </div>
+
+            <form onSubmit={handleReceiptScan}>
+              <div className="form-section">
+                <h3>Receipt Image</h3>
+
+                <label>
+                  Choose Receipt
+                  <input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                    onChange={handleOcrFileChange}
+                  />
+                </label>
+
+                {ocrFile && (
+                  <div className="fraud-info-box">
+                    <span>Selected File</span>
+                    <strong>{ocrFile.name}</strong>
+                    <p>{(ocrFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                  </div>
+                )}
+
+                {ocrPreview && (
+                  <div style={{
+                    marginTop: "18px",
+                    padding: "14px",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: "14px",
+                    textAlign: "center",
+                  }}>
+                    <img
+                      src={ocrPreview}
+                      alt="Receipt preview"
+                      style={{
+                        width: "100%",
+                        maxWidth: "360px",
+                        maxHeight: "480px",
+                        objectFit: "contain",
+                        borderRadius: "10px",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {ocrError && <div className="error-box">{ocrError}</div>}
+
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={ocrLoading || !ocrFile}
+              >
+                {ocrLoading ? "Scanning Receipt..." : "Scan Receipt with AI"}
+              </button>
+            </form>
+          </section>
+
+          <section className="prediction-result-card">
+            <p className="eyebrow">OCR RESULT</p>
+            <h2>Extracted Information</h2>
+
+            {!ocrResult && (
+              <div className="result-placeholder">
+                <div className="result-icon">OCR</div>
+                <h3>Ready to Scan</h3>
+                <p>
+                  Upload a clear receipt image and run EasyOCR to extract
+                  merchant, amount, date and category information.
+                </p>
+              </div>
+            )}
+
+            {ocrResult && (
+              <div className="result-content">
+                <div className="result-highlight">
+                  <p>Detected Amount</p>
+                  <h3>Rs. {Number(ocrForm.amount || 0).toLocaleString()}</h3>
+                </div>
+
+                <div className="form-section">
+                  <h3>Review & Edit Extracted Data</h3>
+                  <div className="form-grid">
+                    <InputField
+                      label="Merchant"
+                      name="merchant"
+                      type="text"
+                      value={ocrForm.merchant}
+                      onChange={handleOcrFieldChange}
+                    />
+                    <InputField
+                      label="Amount"
+                      name="amount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={ocrForm.amount}
+                      onChange={handleOcrFieldChange}
+                    />
+                    <InputField
+                      label="Date"
+                      name="date"
+                      type="text"
+                      value={ocrForm.date}
+                      onChange={handleOcrFieldChange}
+                    />
+                    <InputField
+                      label="Suggested Category"
+                      name="suggested_category"
+                      type="text"
+                      value={ocrForm.suggested_category}
+                      onChange={handleOcrFieldChange}
+                    />
+                  </div>
+                </div>
+
+                <div className="explanation-box">
+                  <span>OCR Confirmation</span>
+                  <p>
+                    {ocrResult.message ||
+                      "Receipt scanned successfully. Please confirm or edit the extracted information."}
+                  </p>
+                </div>
+
+                <div className="fraud-info-box" style={{ marginTop: "16px" }}>
+                  <span>Raw OCR Text</span>
+                  <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {ocrResult.raw_text || "No raw text returned."}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={handleConfirmReceipt}
+                  disabled={transactionSaving}
+                  style={{ marginTop: "18px" }}
+                >
+                  {transactionSaving
+                    ? "Saving Transaction..."
+                    : "Confirm & Save Expense"}
+                </button>
+
+                {ocrConfirmed && savedTransaction && (
+                  <div
+                    className="explanation-box"
+                    style={{ marginTop: "16px" }}
+                  >
+                    <span>Saved Successfully</span>
+                    <p>
+                      Receipt expense has been confirmed and saved to the
+                      transaction database.
+                    </p>
+                    <p>
+                      Transaction ID:{" "}
+                      <strong>
+                        {savedTransaction.transaction_id}
+                      </strong>
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      </>
+    );
+  };
+
+  /* =======================================================
      PAGE ROUTING
      ======================================================= */
 
@@ -2325,6 +3066,10 @@ function App() {
 
     if (activePage === "amount") {
       return renderAmountPrediction();
+    }
+
+    if (activePage === "ocr") {
+      return renderReceiptOcr();
     }
 
     return renderDashboard();
@@ -2397,6 +3142,15 @@ function App() {
               }
             >
               Amount Prediction
+            </button>
+
+            <button
+              className={`nav-item ${
+                activePage === "ocr" ? "active" : ""
+              }`}
+              onClick={() => setActivePage("ocr")}
+            >
+              Receipt OCR
             </button>
           </nav>
         </div>

@@ -25,3 +25,6 @@ Thumbs.db
 # Temporary files
 *.log
 *.tmp
+
+# Local database
+backend/financial_ai.db
