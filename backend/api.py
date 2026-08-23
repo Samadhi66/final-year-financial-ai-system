@@ -879,7 +879,7 @@ def create_transaction(
         source = "Manual"
 
     try:
-        transaction_id = save_transaction(
+        save_result = save_transaction(
             merchant=merchant,
             amount=transaction.amount,
             transaction_date=transaction_date,
@@ -890,12 +890,34 @@ def create_transaction(
             ),
         )
 
+        if save_result.get("duplicate"):
+            return {
+                "status": "Duplicate",
+                "message": (
+                    "This transaction already exists "
+                    "and was not saved again."
+                ),
+                "duplicate": True,
+                "transaction_id":
+                    save_result.get(
+                        "transaction_id"
+                    ),
+                "transaction":
+                    save_result.get(
+                        "transaction"
+                    ),
+            }
+
         return {
             "status": "Success",
             "message": (
                 "Transaction saved successfully."
             ),
-            "transaction_id": transaction_id,
+            "duplicate": False,
+            "transaction_id":
+                save_result.get(
+                    "transaction_id"
+                ),
         }
 
     except Exception as error:
@@ -974,62 +996,7 @@ def latest_transaction():
 
 
 # ============================================================
-# 17. LATEST TRANSACTION FRAUD ANALYSIS
-# ============================================================
-
-@app.get("/transactions/latest/fraud")
-def latest_transaction_fraud():
-    try:
-        latest = get_latest_transaction()
-
-        if not latest:
-            return {
-                "status": "Success",
-                "has_transaction": False,
-                "transaction": None,
-                "fraud_analysis": None,
-            }
-
-        auto_input = AutoFraudTransactionInput(
-            amount=float(latest.get("amount", 0)),
-            category=str(latest.get("category", "Other")),
-            merchant=str(latest.get("merchant", "Unknown")),
-            payment_method=0,
-            location=0,
-        )
-
-        result = auto_detect_fraud(auto_input)
-
-        return {
-            "status": "Success",
-            "has_transaction": True,
-            "transaction_id": latest.get("id"),
-            "transaction": latest,
-            "encoded_features": result.get(
-                "encoded_features"
-            ),
-            "fraud_analysis": result.get(
-                "fraud_analysis"
-            ),
-        }
-
-    except Exception as error:
-        print(
-            "Latest transaction fraud analysis error:",
-            error,
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Latest transaction fraud analysis "
-                "could not be completed."
-            ),
-        )
-
-
-# ============================================================
-# 18. TRANSACTION SUMMARY
+# 17. TRANSACTION SUMMARY
 # ============================================================
 
 @app.get("/transactions/summary")
@@ -1059,7 +1026,7 @@ def transaction_summary():
 
 
 # ============================================================
-# 19. MODEL INFORMATION ENDPOINT
+# 18. MODEL INFORMATION ENDPOINT
 # ============================================================
 
 @app.get("/model_info")

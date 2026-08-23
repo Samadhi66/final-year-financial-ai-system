@@ -72,6 +72,59 @@ def initialize_database():
 
 
 # ============================================================
+# CHECK DUPLICATE TRANSACTION
+# ============================================================
+
+def find_duplicate_transaction(
+    merchant,
+    amount,
+    transaction_date,
+    category
+):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            merchant,
+            amount,
+            transaction_date,
+            category,
+            source,
+            raw_ocr_text,
+            created_at
+        FROM transactions
+        WHERE
+            LOWER(TRIM(merchant)) = LOWER(TRIM(?))
+            AND ROUND(amount, 2) = ROUND(?, 2)
+            AND TRIM(transaction_date) = TRIM(?)
+            AND LOWER(TRIM(category)) = LOWER(TRIM(?))
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (
+            merchant,
+            float(amount),
+            transaction_date,
+            category
+        )
+    )
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    return dict(row)
+
+
+# ============================================================
 # SAVE TRANSACTION
 # ============================================================
 
@@ -83,6 +136,21 @@ def save_transaction(
     source="Manual",
     raw_ocr_text=None
 ):
+
+    duplicate = find_duplicate_transaction(
+        merchant=merchant,
+        amount=amount,
+        transaction_date=transaction_date,
+        category=category
+    )
+
+    if duplicate is not None:
+        return {
+            "saved": False,
+            "duplicate": True,
+            "transaction_id": duplicate["id"],
+            "transaction": duplicate
+        }
 
     connection = get_connection()
 
@@ -127,7 +195,11 @@ def save_transaction(
 
     connection.close()
 
-    return transaction_id
+    return {
+        "saved": True,
+        "duplicate": False,
+        "transaction_id": transaction_id
+    }
 
 
 # ============================================================

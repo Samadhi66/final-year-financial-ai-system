@@ -182,6 +182,15 @@ function App() {
   const [transactionDashboardError, setTransactionDashboardError] =
     useState("");
 
+  const [autoFraudResult, setAutoFraudResult] =
+    useState(null);
+
+  const [autoFraudLoading, setAutoFraudLoading] =
+    useState(false);
+
+  const [autoFraudError, setAutoFraudError] =
+    useState("");
+
   /* =======================================================
      RECEIPT OCR STATE
      ======================================================= */
@@ -873,6 +882,7 @@ function App() {
         summaryResponse,
         transactionsResponse,
         latestResponse,
+        latestFraudResponse,
       ] = await Promise.all([
         fetch(
           "http://127.0.0.1:8000/transactions/summary"
@@ -883,12 +893,16 @@ function App() {
         fetch(
           "http://127.0.0.1:8000/transactions/latest"
         ),
+        fetch(
+          "http://127.0.0.1:8000/transactions/latest/fraud"
+        ),
       ]);
 
       if (
         !summaryResponse.ok ||
         !transactionsResponse.ok ||
-        !latestResponse.ok
+        !latestResponse.ok ||
+        !latestFraudResponse.ok
       ) {
         throw new Error(
           "Transaction dashboard data could not be loaded."
@@ -904,10 +918,14 @@ function App() {
       const latestData =
         await latestResponse.json();
 
+      const latestFraudData =
+        await latestFraudResponse.json();
+
       if (
         summaryData.status !== "Success" ||
         transactionsData.status !== "Success" ||
-        latestData.status !== "Success"
+        latestData.status !== "Success" ||
+        latestFraudData.status !== "Success"
       ) {
         throw new Error(
           "Transaction dashboard data is unavailable."
@@ -942,6 +960,18 @@ function App() {
       setLatestSavedTransaction(
         latestData.transaction || null
       );
+
+      if (
+        latestFraudData.has_transaction &&
+        latestFraudData.fraud_analysis
+      ) {
+        setAutoFraudResult(
+          latestFraudData.fraud_analysis
+        );
+        setAutoFraudError("");
+      } else {
+        setAutoFraudResult(null);
+      }
     } catch (error) {
       console.error(error);
 
@@ -964,6 +994,72 @@ function App() {
   }, [activePage]);
 
   /* =======================================================
+     AUTO FRAUD ANALYSIS FOR SAVED OCR TRANSACTIONS
+     ======================================================= */
+
+  const runAutoFraudAnalysis = async ({
+    amount,
+    category,
+    merchant,
+  }) => {
+    setAutoFraudLoading(true);
+    setAutoFraudError("");
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/auto_detect_fraud",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            amount: Number(amount),
+            category,
+            merchant,
+            payment_method: 0,
+            location: 0,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            "Automatic fraud analysis could not be completed."
+        );
+      }
+
+      setAutoFraudResult(
+        result.fraud_analysis || null
+      );
+
+      return result;
+    } catch (error) {
+      console.error(error);
+
+      setAutoFraudError(
+        error.message ||
+          "Automatic fraud analysis could not be completed."
+      );
+
+      return null;
+    } finally {
+      setAutoFraudLoading(false);
+    }
+  };
+
+  /* =======================================================
      RECEIPT OCR API
      ======================================================= */
 
@@ -974,6 +1070,8 @@ function App() {
     setOcrError("");
     setOcrConfirmed(false);
     setSavedTransaction(null);
+    setAutoFraudResult(null);
+    setAutoFraudError("");
 
     if (ocrPreview) URL.revokeObjectURL(ocrPreview);
     setOcrPreview(file ? URL.createObjectURL(file) : "");
@@ -1127,6 +1225,12 @@ function App() {
 
       setOcrConfirmed(true);
 
+      await runAutoFraudAnalysis({
+        amount: payload.amount,
+        category: payload.category,
+        merchant: payload.merchant,
+      });
+
       await loadTransactionDashboard();
     } catch (error) {
       console.error(error);
@@ -1150,12 +1254,22 @@ function App() {
         ?.predicted_next_week_spending ??
       null;
 
+    const effectiveFraudResult =
+      autoFraudResult || fraudResult;
+
     const latestFraudProbability =
-      fraudResult?.fraud_probability ??
+      effectiveFraudResult
+        ?.fraud_probability ??
       null;
 
     const latestFraudStatus =
-      fraudResult?.fraud_status ??
+      effectiveFraudResult
+        ?.fraud_status ??
+      "Not Analysed";
+
+    const latestFraudRiskLevel =
+      effectiveFraudResult
+        ?.risk_level ??
       "Not Analysed";
 
     const latestAmount =
@@ -1456,14 +1570,7 @@ function App() {
                 </span>
 
                 <strong>
-                  {latestFraudProbability !==
-                  null
-                    ? `${(
-                        Number(
-                          latestFraudProbability
-                        ) * 100
-                      ).toFixed(1)}%`
-                    : "Not run"}
+                  {latestFraudRiskLevel}
                 </strong>
               </div>
 
@@ -1474,6 +1581,23 @@ function App() {
 
                 <strong>
                   {latestFraudStatus}
+                </strong>
+              </div>
+
+              <div>
+                <span>
+                  Fraud Probability
+                </span>
+
+                <strong>
+                  {latestFraudProbability !==
+                  null
+                    ? `${(
+                        Number(
+                          latestFraudProbability
+                        ) * 100
+                      ).toFixed(2)}%`
+                    : "Not run"}
                 </strong>
               </div>
 
@@ -1541,7 +1665,7 @@ function App() {
               <div className="insight-item">
                 <span
                   className={`insight-dot ${
-                    fraudResult
+                    effectiveFraudResult
                       ?.fraud_status ===
                     "Fraud Detected"
                       ? "red"
@@ -1555,15 +1679,15 @@ function App() {
                   </strong>
 
                   <p>
-                    {fraudResult
-                      ? `${fraudResult.fraud_status} with ${(
+                    {effectiveFraudResult
+                      ? `${effectiveFraudResult.fraud_status} · ${effectiveFraudResult.risk_level} risk · ${(
                           Number(
-                            fraudResult.fraud_probability
+                            effectiveFraudResult.fraud_probability
                           ) * 100
                         ).toFixed(
-                          1
+                          2
                         )}% fraud probability.`
-                      : "Analyse a transaction to receive behavioral fraud intelligence."}
+                      : "Analyse a transaction or save an OCR expense to receive behavioral fraud intelligence."}
                   </p>
                 </div>
               </div>
@@ -3039,6 +3163,60 @@ function App() {
                       Transaction ID:{" "}
                       <strong>
                         {savedTransaction.transaction_id}
+                      </strong>
+                    </p>
+                  </div>
+                )}
+
+
+                {autoFraudLoading && (
+                  <div
+                    className="explanation-box"
+                    style={{ marginTop: "16px" }}
+                  >
+                    <span>Fraud Analysis</span>
+                    <p>
+                      Analysing the saved transaction with the Random Forest fraud model...
+                    </p>
+                  </div>
+                )}
+
+                {autoFraudError && (
+                  <div
+                    className="error-box"
+                    style={{ marginTop: "16px" }}
+                  >
+                    {autoFraudError}
+                  </div>
+                )}
+
+                {autoFraudResult && (
+                  <div
+                    className="explanation-box"
+                    style={{ marginTop: "16px" }}
+                  >
+                    <span>Automatic Fraud Analysis</span>
+                    <p>
+                      Decision:{" "}
+                      <strong>
+                        {autoFraudResult.fraud_status}
+                      </strong>
+                    </p>
+                    <p>
+                      Risk Level:{" "}
+                      <strong>
+                        {autoFraudResult.risk_level}
+                      </strong>
+                    </p>
+                    <p>
+                      Fraud Probability:{" "}
+                      <strong>
+                        {(
+                          Number(
+                            autoFraudResult.fraud_probability
+                          ) * 100
+                        ).toFixed(2)}
+                        %
                       </strong>
                     </p>
                   </div>
