@@ -233,6 +233,12 @@ function App() {
   const [transactionSaving, setTransactionSaving] = useState(false);
   const [savedTransaction, setSavedTransaction] = useState(null);
 
+  const [ocrValidation, setOcrValidation] =
+    useState({});
+
+  const [ocrWarnings, setOcrWarnings] =
+    useState([]);
+
   const [ocrForm, setOcrForm] = useState({
     merchant: "",
     amount: "",
@@ -299,6 +305,112 @@ function App() {
   const isValidNumber = (value) =>
     !isEmpty(value) &&
     Number.isFinite(Number(value));
+
+  const transactionCategories = [
+    "Food & Dining",
+    "Groceries",
+    "Transport",
+    "Shopping",
+    "Utilities",
+    "Entertainment",
+    "Healthcare",
+    "Education",
+    "Travel",
+    "Other",
+  ];
+
+  const isValidTransactionDate = (value) => {
+    const match =
+      /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(
+        String(value || "").trim()
+      );
+
+    if (!match) {
+      return false;
+    }
+
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+
+    const date = new Date(
+      year,
+      month - 1,
+      day
+    );
+
+    return (
+      year >= 2000 &&
+      year <= 2100 &&
+      date.getFullYear() === year &&
+      date.getMonth() === month - 1 &&
+      date.getDate() === day
+    );
+  };
+
+  const validateTransactionValues = ({
+    merchant,
+    amount,
+    transaction_date,
+    category,
+  }) => {
+    const errors = {};
+
+    const cleanedMerchant =
+      String(merchant || "").trim();
+
+    const cleanedDate =
+      String(transaction_date || "").trim();
+
+    const cleanedCategory =
+      String(category || "").trim();
+
+    if (!cleanedMerchant) {
+      errors.merchant =
+        "Merchant is required.";
+    } else if (cleanedMerchant.length < 2) {
+      errors.merchant =
+        "Merchant must contain at least 2 characters.";
+    } else if (cleanedMerchant.length > 120) {
+      errors.merchant =
+        "Merchant is too long.";
+    }
+
+    if (
+      !Number.isFinite(Number(amount)) ||
+      Number(amount) <= 0
+    ) {
+      errors.amount =
+        "Amount must be greater than 0.";
+    } else if (Number(amount) > 10000000) {
+      errors.amount =
+        "Amount is unrealistically high.";
+    }
+
+    if (!cleanedDate) {
+      errors.transaction_date =
+        "Transaction date is required.";
+    } else if (
+      !isValidTransactionDate(cleanedDate)
+    ) {
+      errors.transaction_date =
+        "Use a valid date in DD/MM/YYYY format.";
+    }
+
+    if (!cleanedCategory) {
+      errors.category =
+        "Category is required.";
+    } else if (
+      !transactionCategories.includes(
+        cleanedCategory
+      )
+    ) {
+      errors.category =
+        "Please select a valid category.";
+    }
+
+    return errors;
+  };
 
   /* =======================================================
      BUDGET VALIDATION
@@ -1090,15 +1202,20 @@ function App() {
     const amount =
       Number(editTransactionForm.amount);
 
+    const editErrors =
+      validateTransactionValues({
+        merchant,
+        amount,
+        transaction_date:
+          transactionDate,
+        category,
+      });
+
     if (
-      !merchant ||
-      !transactionDate ||
-      !category ||
-      !Number.isFinite(amount) ||
-      amount <= 0
+      Object.keys(editErrors).length > 0
     ) {
       setTransactionEditError(
-        "Please enter a merchant, valid amount greater than 0, transaction date and category."
+        Object.values(editErrors)[0]
       );
       return;
     }
@@ -1342,6 +1459,8 @@ function App() {
     setSavedTransaction(null);
     setAutoFraudResult(null);
     setAutoFraudError("");
+    setOcrValidation({});
+    setOcrWarnings([]);
 
     if (ocrPreview) URL.revokeObjectURL(ocrPreview);
     setOcrPreview(file ? URL.createObjectURL(file) : "");
@@ -1349,7 +1468,24 @@ function App() {
 
   const handleOcrFieldChange = (event) => {
     const { name, value } = event.target;
-    setOcrForm((previous) => ({ ...previous, [name]: value }));
+
+    setOcrForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+
+    const validationKey =
+      name === "date"
+        ? "transaction_date"
+        : name === "suggested_category"
+          ? "category"
+          : name;
+
+    setOcrValidation((previous) => ({
+      ...previous,
+      [validationKey]: "",
+    }));
+
     setOcrConfirmed(false);
     setSavedTransaction(null);
   };
@@ -1402,14 +1538,25 @@ function App() {
       }
 
       setOcrResult(result);
+
+      setOcrWarnings(
+        Array.isArray(result.validation_warnings)
+          ? result.validation_warnings
+          : []
+      );
+
+      setOcrValidation({});
+
       setOcrForm({
         merchant: result.merchant ?? "",
         amount:
-          result.amount !== null && result.amount !== undefined
+          result.amount !== null &&
+          result.amount !== undefined
             ? String(result.amount)
             : "",
         date: result.date ?? "",
-        suggested_category: result.suggested_category ?? "",
+        suggested_category:
+          result.suggested_category ?? "Other",
       });
     } catch (error) {
       console.error(error);
@@ -1423,24 +1570,21 @@ function App() {
   };
 
   const handleConfirmReceipt = async () => {
-    if (
-      !ocrForm.merchant.trim() ||
-      !ocrForm.amount ||
-      !ocrForm.date.trim() ||
-      !ocrForm.suggested_category.trim()
-    ) {
-      setOcrError(
-        "Please review and complete the extracted receipt details before confirming."
-      );
-      return;
-    }
+    const errors =
+      validateTransactionValues({
+        merchant: ocrForm.merchant,
+        amount: ocrForm.amount,
+        transaction_date:
+          ocrForm.date,
+        category:
+          ocrForm.suggested_category,
+      });
 
-    if (
-      !Number.isFinite(Number(ocrForm.amount)) ||
-      Number(ocrForm.amount) <= 0
-    ) {
+    setOcrValidation(errors);
+
+    if (Object.keys(errors).length > 0) {
       setOcrError(
-        "Receipt amount must be a valid value greater than 0."
+        "Please correct the highlighted receipt details before saving."
       );
       return;
     }
@@ -3805,32 +3949,108 @@ function App() {
                       type="text"
                       value={ocrForm.merchant}
                       onChange={handleOcrFieldChange}
+                      error={ocrValidation.merchant}
                     />
+
                     <InputField
                       label="Amount"
                       name="amount"
                       type="number"
                       step="0.01"
-                      min="0"
+                      min="0.01"
                       value={ocrForm.amount}
                       onChange={handleOcrFieldChange}
+                      error={ocrValidation.amount}
                     />
+
                     <InputField
-                      label="Date"
+                      label="Date (DD/MM/YYYY)"
                       name="date"
                       type="text"
                       value={ocrForm.date}
                       onChange={handleOcrFieldChange}
+                      error={
+                        ocrValidation.transaction_date
+                      }
                     />
-                    <InputField
-                      label="Suggested Category"
-                      name="suggested_category"
-                      type="text"
-                      value={ocrForm.suggested_category}
-                      onChange={handleOcrFieldChange}
-                    />
+
+                    <label>
+                      Suggested Category
+
+                      <select
+                        name="suggested_category"
+                        value={
+                          ocrForm.suggested_category
+                        }
+                        onChange={
+                          handleOcrFieldChange
+                        }
+                        style={{
+                          borderColor:
+                            ocrValidation.category
+                              ? "#dc2626"
+                              : undefined,
+                          boxShadow:
+                            ocrValidation.category
+                              ? "0 0 0 3px rgba(220, 38, 38, 0.08)"
+                              : undefined,
+                        }}
+                      >
+                        {transactionCategories.map(
+                          (category) => (
+                            <option
+                              key={category}
+                              value={category}
+                            >
+                              {category}
+                            </option>
+                          )
+                        )}
+                      </select>
+
+                      {ocrValidation.category && (
+                        <span
+                          style={{
+                            color: "#dc2626",
+                            fontSize: "11px",
+                            fontWeight: "600",
+                            marginTop: "2px",
+                          }}
+                        >
+                          {ocrValidation.category}
+                        </span>
+                      )}
+                    </label>
                   </div>
                 </div>
+
+                {ocrWarnings.length > 0 && (
+                  <div
+                    className="error-box"
+                    style={{
+                      marginBottom: "16px",
+                    }}
+                  >
+                    <strong>
+                      Please review these OCR warnings:
+                    </strong>
+
+                    <ul
+                      style={{
+                        margin:
+                          "10px 0 0 18px",
+                      }}
+                    >
+                      {ocrWarnings.map(
+                        (warning, index) => (
+                          <li key={index}>
+                            {warning}
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  </div>
+                )}
 
                 <div className="explanation-box">
                   <span>OCR Confirmation</span>
@@ -3851,7 +4071,13 @@ function App() {
                   type="button"
                   className="primary-button"
                   onClick={handleConfirmReceipt}
-                  disabled={transactionSaving}
+                  disabled={
+                    transactionSaving ||
+                    !ocrForm.merchant.trim() ||
+                    !ocrForm.amount ||
+                    !ocrForm.date.trim() ||
+                    !ocrForm.suggested_category.trim()
+                  }
                   style={{ marginTop: "18px" }}
                 >
                   {transactionSaving

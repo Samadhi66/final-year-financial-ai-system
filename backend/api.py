@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 import io
 
 import joblib
@@ -39,7 +40,7 @@ app = FastAPI(
         "Smart Budget Prediction, Behavioral Fraud Detection, "
         "Amount Prediction, Receipt OCR and Transaction Management API"
     ),
-    version="2.7",
+    version="2.8",
 )
 
 
@@ -244,6 +245,142 @@ class AutoFraudTransactionInput(BaseModel):
 
 
 # ============================================================
+# TRANSACTION VALIDATION HELPERS
+# ============================================================
+
+ALLOWED_TRANSACTION_CATEGORIES = {
+    "Food & Dining",
+    "Groceries",
+    "Transport",
+    "Shopping",
+    "Utilities",
+    "Entertainment",
+    "Healthcare",
+    "Education",
+    "Travel",
+    "Other",
+}
+
+MAX_TRANSACTION_AMOUNT = 10_000_000.0
+MIN_MERCHANT_LENGTH = 2
+MAX_MERCHANT_LENGTH = 120
+
+
+def normalize_text(value: str) -> str:
+    return " ".join(str(value).strip().split())
+
+
+def validate_transaction_fields(
+    merchant: str,
+    amount: float,
+    transaction_date: str,
+    category: str,
+):
+    merchant = normalize_text(merchant)
+    transaction_date = normalize_text(transaction_date)
+    category = normalize_text(category)
+
+    if not merchant:
+        raise HTTPException(
+            status_code=400,
+            detail="Merchant is required.",
+        )
+
+    if len(merchant) < MIN_MERCHANT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Merchant name must contain at least "
+                f"{MIN_MERCHANT_LENGTH} characters."
+            ),
+        )
+
+    if len(merchant) > MAX_MERCHANT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Merchant name is too long. "
+                f"Maximum length is {MAX_MERCHANT_LENGTH} characters."
+            ),
+        )
+
+    if not np.isfinite(float(amount)):
+        raise HTTPException(
+            status_code=400,
+            detail="Transaction amount must be a finite number.",
+        )
+
+    if float(amount) <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Transaction amount must be greater than 0.",
+        )
+
+    if float(amount) > MAX_TRANSACTION_AMOUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Transaction amount is unrealistically high. "
+                f"Maximum accepted amount is Rs. {MAX_TRANSACTION_AMOUNT:,.2f}."
+            ),
+        )
+
+    if not transaction_date:
+        raise HTTPException(
+            status_code=400,
+            detail="Transaction date is required.",
+        )
+
+    try:
+        parsed_date = datetime.strptime(
+            transaction_date,
+            "%d/%m/%Y",
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Transaction date must use DD/MM/YYYY format "
+                "and must be a valid calendar date."
+            ),
+        )
+
+    if parsed_date.year < 2000 or parsed_date.year > 2100:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Transaction date year must be between "
+                "2000 and 2100."
+            ),
+        )
+
+    if not category:
+        raise HTTPException(
+            status_code=400,
+            detail="Category is required.",
+        )
+
+    if category not in ALLOWED_TRANSACTION_CATEGORIES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid category. Allowed categories are: "
+                + ", ".join(
+                    sorted(ALLOWED_TRANSACTION_CATEGORIES)
+                )
+                + "."
+            ),
+        )
+
+    return {
+        "merchant": merchant,
+        "amount": round(float(amount), 2),
+        "transaction_date": transaction_date,
+        "category": category,
+    }
+
+
+# ============================================================
 # FRAUD ENCODING HELPERS
 # ============================================================
 
@@ -294,7 +431,7 @@ def home():
     return {
         "message": "Financial AI API Running",
         "system": "AI-Powered Financial Intelligence System",
-        "version": "2.7",
+        "version": "2.8",
         "modules": [
             "Smart Budget Prediction",
             "Behavioral Fraud Detection",
@@ -304,6 +441,7 @@ def home():
             "Automatic Fraud Analysis",
             "Transaction Deletion",
             "Transaction Editing",
+            "Advanced Input Validation",
         ],
     }
 
@@ -806,31 +944,78 @@ async def ocr_receipt(
             raw_text
         )
 
+        merchant = parsed_data.get("merchant")
+        amount = parsed_data.get("amount")
+        date = parsed_data.get("date")
+        suggested_category = parsed_data.get(
+            "suggested_category",
+            "Other",
+        )
+
+        validation_warnings = []
+
+        if not merchant:
+            validation_warnings.append(
+                "Merchant could not be detected reliably."
+            )
+
+        if (
+            amount is None
+            or not np.isfinite(float(amount))
+            or float(amount) <= 0
+        ):
+            validation_warnings.append(
+                "A valid transaction amount could not be detected."
+            )
+
+        if not date:
+            validation_warnings.append(
+                "Transaction date could not be detected."
+            )
+        else:
+            try:
+                datetime.strptime(
+                    str(date).strip(),
+                    "%d/%m/%Y",
+                )
+            except ValueError:
+                validation_warnings.append(
+                    "Detected date is not a valid DD/MM/YYYY date."
+                )
+
+        if (
+            not suggested_category
+            or suggested_category
+            not in ALLOWED_TRANSACTION_CATEGORIES
+        ):
+            suggested_category = "Other"
+            validation_warnings.append(
+                "Category was uncertain and has been set to Other."
+            )
+
         return {
             "status": "Success",
             "message": (
                 "Receipt scanned successfully. "
                 "Please confirm or edit the "
-                "extracted information."
+                "extracted information before saving."
             ),
             "filename": file.filename,
-            "merchant":
-                parsed_data.get("merchant"),
-            "amount":
-                parsed_data.get("amount"),
-            "date":
-                parsed_data.get("date"),
+            "merchant": merchant,
+            "amount": amount,
+            "date": date,
             "suggested_category":
-                parsed_data.get(
-                    "suggested_category",
-                    "Other",
-                ),
+                suggested_category,
             "raw_text":
                 parsed_data.get(
                     "raw_text",
                     raw_text,
                 ),
             "requires_confirmation": True,
+            "validation_warnings":
+                validation_warnings,
+            "is_complete":
+                len(validation_warnings) == 0,
         }
 
     except HTTPException:
@@ -855,48 +1040,28 @@ async def ocr_receipt(
 def create_transaction(
     transaction: TransactionInput
 ):
-    merchant = transaction.merchant.strip()
-    transaction_date = (
-        transaction.transaction_date.strip()
+    source = normalize_text(
+        transaction.source
     )
-    category = transaction.category.strip()
-    source = transaction.source.strip()
-
-    if not merchant:
-        raise HTTPException(
-            status_code=400,
-            detail="Merchant is required.",
-        )
-
-    if transaction.amount <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Transaction amount must be greater than 0."
-            ),
-        )
-
-    if not transaction_date:
-        raise HTTPException(
-            status_code=400,
-            detail="Transaction date is required.",
-        )
-
-    if not category:
-        raise HTTPException(
-            status_code=400,
-            detail="Category is required.",
-        )
 
     if not source:
         source = "Manual"
 
+    validated = validate_transaction_fields(
+        merchant=transaction.merchant,
+        amount=transaction.amount,
+        transaction_date=transaction.transaction_date,
+        category=transaction.category,
+    )
+
     try:
         save_result = save_transaction(
-            merchant=merchant,
-            amount=transaction.amount,
-            transaction_date=transaction_date,
-            category=category,
+            merchant=validated["merchant"],
+            amount=validated["amount"],
+            transaction_date=validated[
+                "transaction_date"
+            ],
+            category=validated["category"],
             source=source,
             raw_ocr_text=(
                 transaction.raw_ocr_text
@@ -932,6 +1097,9 @@ def create_transaction(
                     "transaction_id"
                 ),
         }
+
+    except HTTPException:
+        raise
 
     except Exception as error:
         print(
@@ -1026,49 +1194,29 @@ def edit_transaction(
             ),
         )
 
-    merchant = transaction.merchant.strip()
-    transaction_date = (
-        transaction.transaction_date.strip()
+    source = normalize_text(
+        transaction.source
     )
-    category = transaction.category.strip()
-    source = transaction.source.strip()
-
-    if not merchant:
-        raise HTTPException(
-            status_code=400,
-            detail="Merchant is required.",
-        )
-
-    if transaction.amount <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Transaction amount must be greater than 0."
-            ),
-        )
-
-    if not transaction_date:
-        raise HTTPException(
-            status_code=400,
-            detail="Transaction date is required.",
-        )
-
-    if not category:
-        raise HTTPException(
-            status_code=400,
-            detail="Category is required.",
-        )
 
     if not source:
         source = "Manual"
 
+    validated = validate_transaction_fields(
+        merchant=transaction.merchant,
+        amount=transaction.amount,
+        transaction_date=transaction.transaction_date,
+        category=transaction.category,
+    )
+
     try:
         result = update_transaction(
             transaction_id=transaction_id,
-            merchant=merchant,
-            amount=transaction.amount,
-            transaction_date=transaction_date,
-            category=category,
+            merchant=validated["merchant"],
+            amount=validated["amount"],
+            transaction_date=validated[
+                "transaction_date"
+            ],
+            category=validated["category"],
             source=source,
             raw_ocr_text=transaction.raw_ocr_text,
         )
@@ -1363,6 +1511,8 @@ def model_info():
                 "Edit transaction",
                 "Delete transaction",
                 "Duplicate protection",
+                "Date/category validation",
+                "OCR completeness warnings",
             ],
         },
     }
