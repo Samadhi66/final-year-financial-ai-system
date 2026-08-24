@@ -16,6 +16,7 @@ from transaction_store import (
     get_all_transactions,
     get_latest_transaction,
     get_transaction_summary,
+    delete_transaction,
 )
 
 
@@ -37,7 +38,7 @@ app = FastAPI(
         "Smart Budget Prediction, Behavioral Fraud Detection, "
         "Amount Prediction, Receipt OCR and Transaction Management API"
     ),
-    version="2.5",
+    version="2.6",
 )
 
 
@@ -283,7 +284,7 @@ def home():
     return {
         "message": "Financial AI API Running",
         "system": "AI-Powered Financial Intelligence System",
-        "version": "2.5",
+        "version": "2.6",
         "modules": [
             "Smart Budget Prediction",
             "Behavioral Fraud Detection",
@@ -291,6 +292,7 @@ def home():
             "Receipt OCR Expense Entry",
             "Transaction Management",
             "Automatic Fraud Analysis",
+            "Transaction Deletion",
         ],
     }
 
@@ -996,7 +998,124 @@ def latest_transaction():
 
 
 # ============================================================
-# 17. TRANSACTION SUMMARY
+# 17. DELETE TRANSACTION
+# ============================================================
+
+@app.delete("/transactions/{transaction_id}")
+def remove_transaction(
+    transaction_id: int
+):
+    if transaction_id <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Transaction ID must be "
+                "greater than 0."
+            ),
+        )
+
+    try:
+        result = delete_transaction(
+            transaction_id
+        )
+
+        if not result.get("found"):
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Transaction not found."
+                ),
+            )
+
+        return {
+            "status": "Success",
+            "message": (
+                "Transaction deleted successfully."
+            ),
+            "transaction_id":
+                result.get(
+                    "transaction_id"
+                ),
+            "transaction":
+                result.get(
+                    "transaction"
+                ),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print(
+            "Transaction delete error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not delete transaction."
+            ),
+        )
+
+
+# ============================================================
+# 18. LATEST TRANSACTION FRAUD ANALYSIS
+# ============================================================
+
+@app.get("/transactions/latest/fraud")
+def latest_transaction_fraud():
+    try:
+        latest = get_latest_transaction()
+
+        if not latest:
+            return {
+                "status": "Success",
+                "has_transaction": False,
+                "transaction": None,
+                "fraud_analysis": None,
+            }
+
+        auto_input = AutoFraudTransactionInput(
+            amount=float(latest.get("amount", 0)),
+            category=str(latest.get("category", "Other")),
+            merchant=str(latest.get("merchant", "Unknown")),
+            payment_method=0,
+            location=0,
+        )
+
+        result = auto_detect_fraud(auto_input)
+
+        return {
+            "status": "Success",
+            "has_transaction": True,
+            "transaction_id": latest.get("id"),
+            "transaction": latest,
+            "encoded_features": result.get(
+                "encoded_features"
+            ),
+            "fraud_analysis": result.get(
+                "fraud_analysis"
+            ),
+        }
+
+    except Exception as error:
+        print(
+            "Latest transaction fraud analysis error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Latest transaction fraud analysis "
+                "could not be completed."
+            ),
+        )
+
+
+# ============================================================
+# 19. TRANSACTION SUMMARY
 # ============================================================
 
 @app.get("/transactions/summary")
@@ -1026,7 +1145,7 @@ def transaction_summary():
 
 
 # ============================================================
-# 18. MODEL INFORMATION ENDPOINT
+# 20. MODEL INFORMATION ENDPOINT
 # ============================================================
 
 @app.get("/model_info")

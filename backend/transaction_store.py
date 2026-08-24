@@ -276,6 +276,79 @@ def get_latest_transaction():
 
 
 # ============================================================
+# DELETE TRANSACTION
+# ============================================================
+
+def delete_transaction(
+    transaction_id
+):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            merchant,
+            amount,
+            transaction_date,
+            category,
+            source,
+            raw_ocr_text,
+            created_at
+        FROM transactions
+        WHERE id = ?
+        """,
+        (
+            int(transaction_id),
+        )
+    )
+
+    existing_transaction = (
+        cursor.fetchone()
+    )
+
+    if existing_transaction is None:
+
+        connection.close()
+
+        return {
+            "deleted": False,
+            "found": False,
+            "transaction": None
+        }
+
+    transaction = dict(
+        existing_transaction
+    )
+
+    cursor.execute(
+        """
+        DELETE FROM transactions
+        WHERE id = ?
+        """,
+        (
+            int(transaction_id),
+        )
+    )
+
+    connection.commit()
+
+    connection.close()
+
+    return {
+        "deleted": True,
+        "found": True,
+        "transaction_id":
+            int(transaction_id),
+        "transaction":
+            transaction
+    }
+
+
+# ============================================================
 # TRANSACTION SUMMARY
 # ============================================================
 
