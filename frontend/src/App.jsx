@@ -191,6 +191,35 @@ function App() {
   const [autoFraudError, setAutoFraudError] =
     useState("");
 
+  const [deletingTransactionId, setDeletingTransactionId] =
+    useState(null);
+
+  const [transactionDeleteMessage, setTransactionDeleteMessage] =
+    useState("");
+
+  const [transactionDeleteError, setTransactionDeleteError] =
+    useState("");
+
+  const [editingTransaction, setEditingTransaction] =
+    useState(null);
+
+  const [editTransactionForm, setEditTransactionForm] =
+    useState({
+      merchant: "",
+      amount: "",
+      transaction_date: "",
+      category: "",
+    });
+
+  const [transactionEditLoading, setTransactionEditLoading] =
+    useState(false);
+
+  const [transactionEditMessage, setTransactionEditMessage] =
+    useState("");
+
+  const [transactionEditError, setTransactionEditError] =
+    useState("");
+
   /* =======================================================
      RECEIPT OCR STATE
      ======================================================= */
@@ -994,6 +1023,247 @@ function App() {
   }, [activePage]);
 
   /* =======================================================
+     EDIT / UPDATE SAVED TRANSACTION
+     ======================================================= */
+
+  const openTransactionEditor = (transaction) => {
+    setEditingTransaction(transaction);
+
+    setEditTransactionForm({
+      merchant: transaction.merchant || "",
+      amount:
+        transaction.amount !== null &&
+        transaction.amount !== undefined
+          ? String(transaction.amount)
+          : "",
+      transaction_date:
+        transaction.transaction_date || "",
+      category: transaction.category || "",
+    });
+
+    setTransactionEditMessage("");
+    setTransactionEditError("");
+  };
+
+  const closeTransactionEditor = () => {
+    if (transactionEditLoading) {
+      return;
+    }
+
+    setEditingTransaction(null);
+    setEditTransactionForm({
+      merchant: "",
+      amount: "",
+      transaction_date: "",
+      category: "",
+    });
+    setTransactionEditError("");
+  };
+
+  const handleEditTransactionChange = (event) => {
+    const { name, value } = event.target;
+
+    setEditTransactionForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+
+    setTransactionEditError("");
+  };
+
+  const handleUpdateTransaction = async (event) => {
+    event.preventDefault();
+
+    if (!editingTransaction) {
+      return;
+    }
+
+    const merchant =
+      editTransactionForm.merchant.trim();
+
+    const transactionDate =
+      editTransactionForm.transaction_date.trim();
+
+    const category =
+      editTransactionForm.category.trim();
+
+    const amount =
+      Number(editTransactionForm.amount);
+
+    if (
+      !merchant ||
+      !transactionDate ||
+      !category ||
+      !Number.isFinite(amount) ||
+      amount <= 0
+    ) {
+      setTransactionEditError(
+        "Please enter a merchant, valid amount greater than 0, transaction date and category."
+      );
+      return;
+    }
+
+    setTransactionEditLoading(true);
+    setTransactionEditMessage("");
+    setTransactionEditError("");
+    setTransactionDeleteMessage("");
+    setTransactionDeleteError("");
+
+    const payload = {
+      merchant,
+      amount,
+      transaction_date: transactionDate,
+      category,
+      source:
+        editingTransaction.source || "Manual",
+      raw_ocr_text:
+        editingTransaction.raw_ocr_text ?? null,
+    };
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/transactions/${editingTransaction.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status === "Duplicate") {
+        throw new Error(
+          result.message ||
+            "Another identical transaction already exists."
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            "Transaction could not be updated."
+        );
+      }
+
+      setTransactionEditMessage(
+        `Transaction #${editingTransaction.id} updated successfully.`
+      );
+
+      if (
+        savedTransaction?.transaction_id ===
+        editingTransaction.id
+      ) {
+        setSavedTransaction((previous) =>
+          previous
+            ? {
+                ...previous,
+                ...payload,
+              }
+            : previous
+        );
+      }
+
+      setEditingTransaction(null);
+      setEditTransactionForm({
+        merchant: "",
+        amount: "",
+        transaction_date: "",
+        category: "",
+      });
+
+      await loadTransactionDashboard();
+    } catch (error) {
+      console.error(error);
+
+      setTransactionEditError(
+        error.message ||
+          "Transaction could not be updated. Please check that the FastAPI server is running."
+      );
+    } finally {
+      setTransactionEditLoading(false);
+    }
+  };
+
+  /* =======================================================
+     DELETE SAVED TRANSACTION
+     ======================================================= */
+
+  const handleDeleteTransaction = async (transaction) => {
+    const confirmed = window.confirm(
+      `Delete transaction #${transaction.id} from ${transaction.merchant} for Rs. ${Number(
+        transaction.amount
+      ).toLocaleString()}?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingTransactionId(transaction.id);
+    setTransactionDeleteMessage("");
+    setTransactionDeleteError("");
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/transactions/${transaction.id}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            "Transaction could not be deleted."
+        );
+      }
+
+      setTransactionDeleteMessage(
+        `Transaction #${transaction.id} deleted successfully.`
+      );
+
+      if (
+        savedTransaction?.transaction_id === transaction.id
+      ) {
+        setSavedTransaction(null);
+        setOcrConfirmed(false);
+      }
+
+      await loadTransactionDashboard();
+    } catch (error) {
+      console.error(error);
+
+      setTransactionDeleteError(
+        error.message ||
+          "Transaction could not be deleted. Please check that the FastAPI server is running."
+      );
+    } finally {
+      setDeletingTransactionId(null);
+    }
+  };
+
+  /* =======================================================
      AUTO FRAUD ANALYSIS FOR SAVED OCR TRANSACTIONS
      ======================================================= */
 
@@ -1455,6 +1725,355 @@ function App() {
           </div>
         )}
 
+        {transactionDeleteError && (
+          <div
+            className="error-box"
+            style={{
+              marginBottom: "20px",
+            }}
+          >
+            {transactionDeleteError}
+          </div>
+        )}
+
+        {transactionDeleteMessage && (
+          <div
+            className="explanation-box"
+            style={{
+              marginBottom: "20px",
+            }}
+          >
+            <span>Transaction Updated</span>
+            <p>{transactionDeleteMessage}</p>
+          </div>
+        )}
+
+        {transactionEditError && !editingTransaction && (
+          <div
+            className="error-box"
+            style={{
+              marginBottom: "20px",
+            }}
+          >
+            {transactionEditError}
+          </div>
+        )}
+
+        {transactionEditMessage && (
+          <div
+            className="explanation-box"
+            style={{
+              marginBottom: "20px",
+            }}
+          >
+            <span>Transaction Updated</span>
+            <p>{transactionEditMessage}</p>
+          </div>
+        )}
+
+        {editingTransaction && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(15, 23, 42, 0.48)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "20px",
+              zIndex: 9999,
+            }}
+            onMouseDown={(event) => {
+              if (
+                event.target === event.currentTarget &&
+                !transactionEditLoading
+              ) {
+                closeTransactionEditor();
+              }
+            }}
+          >
+            <form
+              onSubmit={handleUpdateTransaction}
+              style={{
+                width: "min(560px, 100%)",
+                background: "#ffffff",
+                borderRadius: "18px",
+                padding: "24px",
+                boxShadow:
+                  "0 24px 70px rgba(15, 23, 42, 0.22)",
+                border: "1px solid #e2e8f0",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: "14px",
+                  marginBottom: "20px",
+                }}
+              >
+                <div>
+                  <p
+                    className="eyebrow"
+                    style={{
+                      marginBottom: "6px",
+                    }}
+                  >
+                    TRANSACTION MANAGEMENT
+                  </p>
+
+                  <h2
+                    style={{
+                      margin: 0,
+                    }}
+                  >
+                    Edit Transaction #{editingTransaction.id}
+                  </h2>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeTransactionEditor}
+                  disabled={transactionEditLoading}
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    background: "#f8fafc",
+                    color: "#0f172a",
+                    borderRadius: "9px",
+                    padding: "7px 11px",
+                    cursor:
+                      transactionEditLoading
+                        ? "not-allowed"
+                        : "pointer",
+                    fontWeight: "700",
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(2, minmax(0, 1fr))",
+                  gap: "14px",
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "7px",
+                    fontWeight: "700",
+                    fontSize: "12px",
+                  }}
+                >
+                  Merchant
+                  <input
+                    type="text"
+                    name="merchant"
+                    value={editTransactionForm.merchant}
+                    onChange={handleEditTransactionChange}
+                    disabled={transactionEditLoading}
+                    style={{
+                      width: "100%",
+                      border: "1px solid #dbe3ef",
+                      borderRadius: "9px",
+                      padding: "11px 12px",
+                      font: "inherit",
+                    }}
+                  />
+                </label>
+
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "7px",
+                    fontWeight: "700",
+                    fontSize: "12px",
+                  }}
+                >
+                  Amount
+                  <input
+                    type="number"
+                    name="amount"
+                    min="0.01"
+                    step="0.01"
+                    value={editTransactionForm.amount}
+                    onChange={handleEditTransactionChange}
+                    disabled={transactionEditLoading}
+                    style={{
+                      width: "100%",
+                      border: "1px solid #dbe3ef",
+                      borderRadius: "9px",
+                      padding: "11px 12px",
+                      font: "inherit",
+                    }}
+                  />
+                </label>
+
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "7px",
+                    fontWeight: "700",
+                    fontSize: "12px",
+                  }}
+                >
+                  Transaction Date
+                  <input
+                    type="text"
+                    name="transaction_date"
+                    placeholder="DD/MM/YYYY"
+                    value={
+                      editTransactionForm.transaction_date
+                    }
+                    onChange={handleEditTransactionChange}
+                    disabled={transactionEditLoading}
+                    style={{
+                      width: "100%",
+                      border: "1px solid #dbe3ef",
+                      borderRadius: "9px",
+                      padding: "11px 12px",
+                      font: "inherit",
+                    }}
+                  />
+                </label>
+
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "7px",
+                    fontWeight: "700",
+                    fontSize: "12px",
+                  }}
+                >
+                  Category
+                  <select
+                    name="category"
+                    value={editTransactionForm.category}
+                    onChange={handleEditTransactionChange}
+                    disabled={transactionEditLoading}
+                    style={{
+                      width: "100%",
+                      border: "1px solid #dbe3ef",
+                      borderRadius: "9px",
+                      padding: "11px 12px",
+                      font: "inherit",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                    }}
+                  >
+                    <option value="">
+                      Select category
+                    </option>
+                    <option value="Food & Dining">
+                      Food & Dining
+                    </option>
+                    <option value="Groceries">
+                      Groceries
+                    </option>
+                    <option value="Transport">
+                      Transport
+                    </option>
+                    <option value="Shopping">
+                      Shopping
+                    </option>
+                    <option value="Utilities">
+                      Utilities
+                    </option>
+                    <option value="Entertainment">
+                      Entertainment
+                    </option>
+                    <option value="Healthcare">
+                      Healthcare
+                    </option>
+                    <option value="Education">
+                      Education
+                    </option>
+                    <option value="Travel">
+                      Travel
+                    </option>
+                    <option value="Other">
+                      Other
+                    </option>
+                  </select>
+                </label>
+              </div>
+
+              {transactionEditError && (
+                <div
+                  className="error-box"
+                  style={{
+                    marginTop: "16px",
+                  }}
+                >
+                  {transactionEditError}
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "10px",
+                  marginTop: "22px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={closeTransactionEditor}
+                  disabled={transactionEditLoading}
+                  style={{
+                    border: "1px solid #dbe3ef",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    borderRadius: "9px",
+                    padding: "10px 15px",
+                    cursor:
+                      transactionEditLoading
+                        ? "not-allowed"
+                        : "pointer",
+                    fontWeight: "700",
+                  }}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={transactionEditLoading}
+                  style={{
+                    border: "none",
+                    background: "#2563eb",
+                    color: "#ffffff",
+                    borderRadius: "9px",
+                    padding: "10px 17px",
+                    cursor:
+                      transactionEditLoading
+                        ? "not-allowed"
+                        : "pointer",
+                    fontWeight: "700",
+                    opacity:
+                      transactionEditLoading
+                        ? 0.7
+                        : 1,
+                  }}
+                >
+                  {transactionEditLoading
+                    ? "Saving..."
+                    : "Save Changes"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
         <section className="dashboard-grid">
           <div className="dashboard-panel">
             <div className="panel-heading">
@@ -1499,8 +2118,19 @@ function App() {
                   (transaction) => (
                     <div
                       key={transaction.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                      }}
                     >
-                      <span>
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
                         <strong>
                           {transaction.merchant}
                         </strong>
@@ -1510,12 +2140,92 @@ function App() {
                         {transaction.transaction_date}
                       </span>
 
-                      <strong>
-                        Rs.{" "}
-                        {Number(
-                          transaction.amount
-                        ).toLocaleString()}
-                      </strong>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <strong>
+                          Rs.{" "}
+                          {Number(
+                            transaction.amount
+                          ).toLocaleString()}
+                        </strong>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openTransactionEditor(
+                              transaction
+                            )
+                          }
+                          disabled={
+                            deletingTransactionId ===
+                            transaction.id
+                          }
+                          style={{
+                            border: "1px solid #bfdbfe",
+                            background: "#eff6ff",
+                            color: "#2563eb",
+                            borderRadius: "8px",
+                            padding: "6px 10px",
+                            fontSize: "11px",
+                            fontWeight: "700",
+                            cursor:
+                              deletingTransactionId ===
+                              transaction.id
+                                ? "not-allowed"
+                                : "pointer",
+                            opacity:
+                              deletingTransactionId ===
+                              transaction.id
+                                ? 0.6
+                                : 1,
+                          }}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDeleteTransaction(
+                              transaction
+                            )
+                          }
+                          disabled={
+                            deletingTransactionId ===
+                            transaction.id
+                          }
+                          style={{
+                            border: "1px solid #fecaca",
+                            background: "#fff7f7",
+                            color: "#dc2626",
+                            borderRadius: "8px",
+                            padding: "6px 10px",
+                            fontSize: "11px",
+                            fontWeight: "700",
+                            cursor:
+                              deletingTransactionId ===
+                              transaction.id
+                                ? "not-allowed"
+                                : "pointer",
+                            opacity:
+                              deletingTransactionId ===
+                              transaction.id
+                                ? 0.6
+                                : 1,
+                          }}
+                        >
+                          {deletingTransactionId ===
+                          transaction.id
+                            ? "Deleting..."
+                            : "Delete"}
+                        </button>
+                      </div>
                     </div>
                   )
                 )}
