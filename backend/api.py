@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import io
+import math
 
 import joblib
 import numpy as np
@@ -40,7 +41,7 @@ app = FastAPI(
         "Smart Budget Prediction, Behavioral Fraud Detection, "
         "Amount Prediction, Receipt OCR and Transaction Management API"
     ),
-    version="2.8",
+    version="3.0",
 )
 
 
@@ -422,6 +423,613 @@ def merchant_to_code(merchant: str) -> int:
     return sum(ord(char) for char in merchant) % 100
 
 
+
+# ============================================================
+# AUTO BUDGET FEATURE HELPERS
+# ============================================================
+
+def parse_transaction_date(value):
+    try:
+        return datetime.strptime(
+            str(value).strip(),
+            "%d/%m/%Y",
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def start_of_week(value):
+    return value.replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    ) - pd.Timedelta(
+        days=value.weekday()
+    )
+
+
+def _safe_average(values, fallback=0.0):
+    cleaned = [
+        float(value)
+        for value in values
+        if value is not None
+        and np.isfinite(float(value))
+    ]
+
+    if not cleaned:
+        return float(fallback)
+
+    return float(
+        sum(cleaned) / len(cleaned)
+    )
+
+
+def _transaction_fraud_flag(transaction):
+    try:
+        auto_input = AutoFraudTransactionInput(
+            amount=float(
+                transaction.get("amount", 0)
+            ),
+            category=str(
+                transaction.get("category", "Other")
+            ),
+            merchant=str(
+                transaction.get("merchant", "Unknown")
+            ),
+            payment_method=0,
+            location=0,
+        )
+
+        result = auto_detect_fraud(
+            auto_input
+        )
+
+        fraud_analysis = (
+            result.get("fraud_analysis")
+            if isinstance(result, dict)
+            else None
+        )
+
+        if not fraud_analysis:
+            return 0
+
+        return int(
+            fraud_analysis.get("fraud_status")
+            == "Fraud Detected"
+        )
+
+    except Exception:
+        return 0
+
+
+def build_auto_budget_features():
+    transactions = get_all_transactions()
+
+    valid_transactions = []
+    ignored_transaction_ids = []
+
+    for transaction in transactions:
+        parsed_date = parse_transaction_date(
+            transaction.get("transaction_date")
+        )
+
+        try:
+            amount = float(
+                transaction.get("amount", 0)
+            )
+        except (TypeError, ValueError):
+            amount = 0.0
+
+        if (
+            parsed_date is None
+            or not np.isfinite(amount)
+            or amount <= 0
+        ):
+            ignored_transaction_ids.append(
+                transaction.get("id")
+            )
+            continue
+
+        valid_transactions.append(
+            {
+                **transaction,
+                "_date": parsed_date,
+                "_amount": amount,
+                "_week_start":
+                    start_of_week(parsed_date),
+            }
+        )
+
+    if not valid_transactions:
+        return {
+            "status": "Insufficient Data",
+            "can_predict": False,
+            "message": (
+                "No valid saved transaction history is available "
+                "for automatic budget forecasting."
+            ),
+            "features": None,
+            "history": {
+                "valid_transaction_count": 0,
+                "ignored_transaction_ids":
+                    ignored_transaction_ids,
+                "observed_week_count": 0,
+                "imputed_week_count": 0,
+                "history_quality": "Insufficient",
+            },
+            "warnings": [
+                (
+                    "Save valid transactions with DD/MM/YYYY dates "
+                    "before generating an automatic budget forecast."
+                )
+            ],
+        }
+
+    latest_date = max(
+        item["_date"]
+        for item in valid_transactions
+    )
+
+    reference_week = start_of_week(
+        latest_date
+    )
+
+    weekly = {}
+
+    for item in valid_transactions:
+        week_start = item["_week_start"]
+
+        if week_start not in weekly:
+            weekly[week_start] = {
+                "spending": 0.0,
+                "count": 0,
+                "amounts": [],
+                "transactions": [],
+            }
+
+        weekly[week_start]["spending"] += item["_amount"]
+        weekly[week_start]["count"] += 1
+        weekly[week_start]["amounts"].append(item["_amount"])
+        weekly[week_start]["transactions"].append(item)
+
+    def week_bucket(offset):
+        target_week = (
+            reference_week
+            - pd.Timedelta(weeks=offset)
+        )
+        return weekly.get(target_week)
+
+    current_bucket = (
+        week_bucket(0)
+        or {
+            "spending": 0.0,
+            "count": 0,
+            "amounts": [],
+            "transactions": [],
+        }
+    )
+
+    observed_historical_spending = [
+        bucket["spending"]
+        for week_start, bucket in weekly.items()
+        if week_start < reference_week
+    ]
+
+    if observed_historical_spending:
+        historical_fallback = _safe_average(
+            observed_historical_spending
+        )
+    else:
+        historical_fallback = float(
+            current_bucket["spending"]
+        )
+
+    if historical_fallback <= 0:
+        historical_fallback = 1.0
+
+    imputed_offsets = []
+    lag_spending = {}
+
+    for offset in range(1, 9):
+        bucket = week_bucket(offset)
+
+        if bucket is None:
+            lag_spending[offset] = historical_fallback
+            imputed_offsets.append(offset)
+        else:
+            lag_spending[offset] = float(
+                bucket["spending"]
+            )
+
+    current_spending = float(
+        current_bucket["spending"]
+    )
+
+    current_transaction_count = int(
+        current_bucket["count"]
+    )
+
+    current_avg_amount = _safe_average(
+        current_bucket["amounts"],
+        fallback=0.0,
+    )
+
+    previous_bucket = week_bucket(1)
+
+    if previous_bucket is None:
+        previous_transaction_count = 0
+        previous_avg_amount = historical_fallback
+    else:
+        previous_transaction_count = int(
+            previous_bucket["count"]
+        )
+        previous_avg_amount = _safe_average(
+            previous_bucket["amounts"],
+            fallback=historical_fallback,
+        )
+
+    current_fraud_count = sum(
+        _transaction_fraud_flag(transaction)
+        for transaction
+        in current_bucket["transactions"]
+    )
+
+    previous_2_week_avg = _safe_average(
+        [
+            lag_spending[1],
+            lag_spending[2],
+        ],
+        fallback=historical_fallback,
+    )
+
+    previous_4_week_avg = _safe_average(
+        [
+            lag_spending[1],
+            lag_spending[2],
+            lag_spending[3],
+            lag_spending[4],
+        ],
+        fallback=historical_fallback,
+    )
+
+    previous_8_week_avg = _safe_average(
+        [
+            lag_spending[offset]
+            for offset in range(1, 9)
+        ],
+        fallback=historical_fallback,
+    )
+
+    spending_change = (
+        current_spending
+        - lag_spending[1]
+    )
+
+    if lag_spending[1] == 0:
+        spending_change_percentage = 0.0
+    else:
+        spending_change_percentage = (
+            spending_change
+            / lag_spending[1]
+            * 100
+        )
+
+    iso_week = int(
+        latest_date.isocalendar().week
+    )
+
+    seasonal_angle = (
+        2 * math.pi * iso_week / 52.0
+    )
+
+    features = {
+        "week_sin":
+            round(math.sin(seasonal_angle), 6),
+        "week_cos":
+            round(math.cos(seasonal_angle), 6),
+
+        "current_week_spending":
+            round(current_spending, 2),
+
+        "spending_1_week_ago":
+            round(lag_spending[1], 2),
+        "spending_2_weeks_ago":
+            round(lag_spending[2], 2),
+        "spending_3_weeks_ago":
+            round(lag_spending[3], 2),
+        "spending_4_weeks_ago":
+            round(lag_spending[4], 2),
+
+        "previous_2_week_avg":
+            round(previous_2_week_avg, 2),
+        "previous_4_week_avg":
+            round(previous_4_week_avg, 2),
+        "previous_8_week_avg":
+            round(previous_8_week_avg, 2),
+
+        "current_transaction_count":
+            current_transaction_count,
+        "current_avg_transaction_amount":
+            round(current_avg_amount, 2),
+        "current_fraud_count":
+            int(current_fraud_count),
+
+        "previous_transaction_count":
+            previous_transaction_count,
+        "previous_avg_transaction_amount":
+            round(previous_avg_amount, 2),
+
+        "spending_change":
+            round(spending_change, 2),
+        "spending_change_percentage":
+            round(spending_change_percentage, 4),
+    }
+
+    observed_week_count = len(weekly)
+    imputed_week_count = len(imputed_offsets)
+
+    if observed_week_count >= 8:
+        history_quality = "High"
+    elif observed_week_count >= 4:
+        history_quality = "Medium"
+    else:
+        history_quality = "Low"
+
+    warnings = []
+
+    if ignored_transaction_ids:
+        warnings.append(
+            (
+                f"{len(ignored_transaction_ids)} saved transaction(s) "
+                "were ignored because their date or amount was invalid."
+            )
+        )
+
+    if imputed_week_count > 0:
+        warnings.append(
+            (
+                f"{imputed_week_count} historical week(s) were missing. "
+                "Those lag values were imputed using the average of "
+                "available historical weekly spending. "
+                "Forecast reliability will improve as more real "
+                "transaction history is saved."
+            )
+        )
+
+    return {
+        "status": "Success",
+        "can_predict": True,
+        "message": (
+            "Automatic budget features generated from "
+            "saved transaction history."
+        ),
+        "features": features,
+        "history": {
+            "reference_week_start":
+                reference_week.strftime("%d/%m/%Y"),
+            "latest_transaction_date":
+                latest_date.strftime("%d/%m/%Y"),
+            "valid_transaction_count":
+                len(valid_transactions),
+            "ignored_transaction_ids":
+                ignored_transaction_ids,
+            "observed_week_count":
+                observed_week_count,
+            "imputed_week_count":
+                imputed_week_count,
+            "imputed_week_offsets":
+                imputed_offsets,
+            "history_quality":
+                history_quality,
+        },
+        "warnings": warnings,
+    }
+
+
+
+# ============================================================
+# AUTO AMOUNT PREDICTION HELPERS
+# ============================================================
+
+def build_auto_amount_features():
+    """
+    Build the legacy amount-prediction model features from the
+    latest saved transaction plus saved transaction history.
+    """
+
+    latest = get_latest_transaction()
+    transactions = get_all_transactions()
+
+    if not latest:
+        return {
+            "status": "Insufficient Data",
+            "can_predict": False,
+            "message": (
+                "No saved transaction is available for "
+                "automatic amount prediction."
+            ),
+            "features": None,
+            "transaction": None,
+            "history": {
+                "transaction_count": 0,
+                "same_category_count": 0,
+                "same_merchant_count": 0,
+                "history_quality": "Insufficient",
+            },
+            "warnings": [
+                "Save at least one valid transaction before running automatic amount prediction."
+            ],
+        }
+
+    parsed_date = parse_transaction_date(
+        latest.get("transaction_date")
+    )
+
+    if parsed_date is None:
+        return {
+            "status": "Insufficient Data",
+            "can_predict": False,
+            "message": (
+                "The latest saved transaction does not have "
+                "a valid DD/MM/YYYY date."
+            ),
+            "features": None,
+            "transaction": latest,
+            "history": {
+                "transaction_count": len(transactions),
+                "same_category_count": 0,
+                "same_merchant_count": 0,
+                "history_quality": "Insufficient",
+            },
+            "warnings": [
+                "Edit the latest transaction and provide a valid DD/MM/YYYY date."
+            ],
+        }
+
+    latest_category = str(
+        latest.get("category", "Other")
+    ).strip()
+
+    latest_merchant = str(
+        latest.get("merchant", "Unknown")
+    ).strip()
+
+    category_amounts = []
+    same_merchant_count = 0
+
+    for transaction in transactions:
+        try:
+            amount = float(
+                transaction.get("amount", 0)
+            )
+        except (TypeError, ValueError):
+            continue
+
+        if not np.isfinite(amount) or amount <= 0:
+            continue
+
+        transaction_category = str(
+            transaction.get("category", "Other")
+        ).strip()
+
+        transaction_merchant = str(
+            transaction.get("merchant", "Unknown")
+        ).strip()
+
+        if (
+            transaction_category.lower()
+            == latest_category.lower()
+        ):
+            category_amounts.append(amount)
+
+        if (
+            transaction_merchant.lower()
+            == latest_merchant.lower()
+        ):
+            same_merchant_count += 1
+
+    if category_amounts:
+        category_avg_amount = (
+            sum(category_amounts)
+            / len(category_amounts)
+        )
+    else:
+        category_avg_amount = float(
+            latest.get("amount", 0)
+        )
+
+    month = parsed_date.month
+    day = parsed_date.day
+    is_weekend = int(
+        parsed_date.weekday() >= 5
+    )
+
+    # The current saved transaction schema does not yet store
+    # payment method or location, so safe neutral defaults are used.
+    payment_method = 0
+    location = 0
+    payment_impact = 1.0
+
+    features = {
+        "category": category_to_code(
+            latest_category
+        ),
+        "merchant": merchant_to_code(
+            latest_merchant
+        ),
+        "payment_method": payment_method,
+        "location": location,
+        "month": month,
+        "day": day,
+        "is_weekend": is_weekend,
+        "category_avg_amount": round(
+            float(category_avg_amount),
+            2,
+        ),
+        "merchant_frequency": int(
+            same_merchant_count
+        ),
+        "payment_impact": payment_impact,
+    }
+
+    valid_transaction_count = 0
+
+    for transaction in transactions:
+        try:
+            amount = float(
+                transaction.get("amount", 0)
+            )
+        except (TypeError, ValueError):
+            continue
+
+        if np.isfinite(amount) and amount > 0:
+            valid_transaction_count += 1
+
+    if valid_transaction_count >= 20:
+        history_quality = "High"
+    elif valid_transaction_count >= 5:
+        history_quality = "Medium"
+    else:
+        history_quality = "Low"
+
+    warnings = []
+
+    if history_quality == "Low":
+        warnings.append(
+            (
+                "Saved transaction history is currently limited. "
+                "The automatic amount prediction should be treated "
+                "as a preliminary estimate until more real transactions are saved."
+            )
+        )
+
+    warnings.append(
+        (
+            "Payment method and location are not stored in the current "
+            "transaction table, so neutral default codes are used for those features."
+        )
+    )
+
+    return {
+        "status": "Success",
+        "can_predict": True,
+        "message": (
+            "Automatic amount-prediction features generated "
+            "from the latest saved transaction and transaction history."
+        ),
+        "transaction": latest,
+        "features": features,
+        "history": {
+            "transaction_count": valid_transaction_count,
+            "same_category_count": len(category_amounts),
+            "same_merchant_count": same_merchant_count,
+            "history_quality": history_quality,
+        },
+        "warnings": warnings,
+    }
+
+
 # ============================================================
 # 8. HOME ENDPOINT
 # ============================================================
@@ -431,7 +1039,7 @@ def home():
     return {
         "message": "Financial AI API Running",
         "system": "AI-Powered Financial Intelligence System",
-        "version": "2.8",
+        "version": "3.0",
         "modules": [
             "Smart Budget Prediction",
             "Behavioral Fraud Detection",
@@ -442,6 +1050,8 @@ def home():
             "Transaction Deletion",
             "Transaction Editing",
             "Advanced Input Validation",
+            "Automatic Budget Forecasting",
+            "Automatic Amount Prediction",
         ],
     }
 
@@ -503,8 +1113,180 @@ def predict_amount(data: PredictionInput):
         }
 
 
+
 # ============================================================
-# 10. SMART BUDGET PREDICTION ENDPOINT
+# 10. AUTO AMOUNT FEATURES FROM SAVED TRANSACTIONS
+# ============================================================
+
+@app.get("/amount/auto-features")
+def auto_amount_features():
+    try:
+        return build_auto_amount_features()
+
+    except Exception as error:
+        print(
+            "Automatic amount feature error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Automatic amount features could not be generated."
+            ),
+        )
+
+
+# ============================================================
+# 11. AUTO AMOUNT PREDICTION FROM LATEST SAVED TRANSACTION
+# ============================================================
+
+@app.post("/amount/auto-predict")
+def auto_amount_prediction():
+    if prediction_model is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Amount prediction model is temporarily unavailable."
+            ),
+        )
+
+    try:
+        feature_result = (
+            build_auto_amount_features()
+        )
+
+        if not feature_result.get(
+            "can_predict"
+        ):
+            return feature_result
+
+        features = feature_result[
+            "features"
+        ]
+
+        ordered_features = [
+            "category",
+            "merchant",
+            "payment_method",
+            "location",
+            "month",
+            "day",
+            "is_weekend",
+            "category_avg_amount",
+            "merchant_frequency",
+            "payment_impact",
+        ]
+
+        input_data = pd.DataFrame(
+            [features]
+        )[ordered_features]
+
+        prediction = prediction_model.predict(
+            input_data
+        )
+
+        predicted_amount = round(
+            float(prediction[0]),
+            2,
+        )
+
+        latest_amount = float(
+            feature_result[
+                "transaction"
+            ].get("amount", 0)
+        )
+
+        difference = round(
+            predicted_amount - latest_amount,
+            2,
+        )
+
+        if latest_amount == 0:
+            percentage_difference = 0.0
+        else:
+            percentage_difference = round(
+                abs(difference)
+                / latest_amount
+                * 100,
+                2,
+            )
+
+        if difference > 0:
+            trend = "Higher Than Latest"
+        elif difference < 0:
+            trend = "Lower Than Latest"
+        else:
+            trend = "Similar To Latest"
+
+        explanation = (
+            "The predicted transaction amount was generated from "
+            "the latest saved transaction together with category, "
+            "merchant-frequency and calendar context."
+        )
+
+        if (
+            feature_result["history"][
+                "history_quality"
+            ]
+            == "Low"
+        ):
+            explanation += (
+                " Transaction history is currently limited, "
+                "so this result should be treated as a preliminary estimate."
+            )
+
+        return {
+            "status": "Success",
+            "message": (
+                "Automatic amount prediction generated "
+                "from saved transaction data."
+            ),
+            "source":
+                "SQLite Saved Transactions",
+            "predicted_amount":
+                predicted_amount,
+            "latest_transaction_amount":
+                round(latest_amount, 2),
+            "difference":
+                difference,
+            "percentage_difference":
+                percentage_difference,
+            "trend":
+                trend,
+            "explanation":
+                explanation,
+            "model":
+                "Random Forest",
+            "auto_features":
+                features,
+            "transaction":
+                feature_result["transaction"],
+            "history":
+                feature_result["history"],
+            "warnings":
+                feature_result["warnings"],
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print(
+            "Automatic amount prediction error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Automatic amount prediction could not be completed."
+            ),
+        )
+
+
+# ============================================================
+# 12. SMART BUDGET PREDICTION ENDPOINT
 # ============================================================
 
 @app.post("/predict_budget")
@@ -613,8 +1395,190 @@ def predict_budget(data: BudgetPredictionInput):
         }
 
 
+
 # ============================================================
-# 11. FRAUD DETECTION ENDPOINT
+# 13. AUTO BUDGET FEATURES FROM SAVED TRANSACTIONS
+# ============================================================
+
+@app.get("/budget/auto-features")
+def auto_budget_features():
+    try:
+        return build_auto_budget_features()
+
+    except Exception as error:
+        print(
+            "Automatic budget feature error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Automatic budget features could not be generated."
+            ),
+        )
+
+
+# ============================================================
+# 14. AUTO BUDGET PREDICTION FROM SAVED TRANSACTIONS
+# ============================================================
+
+@app.post("/budget/auto-predict")
+def auto_budget_prediction():
+    if (
+        budget_model is None
+        or budget_features is None
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Budget prediction model is temporarily unavailable."
+            ),
+        )
+
+    try:
+        feature_result = build_auto_budget_features()
+
+        if not feature_result.get("can_predict"):
+            return feature_result
+
+        features = feature_result["features"]
+
+        input_data = pd.DataFrame(
+            [features]
+        )
+
+        missing_features = [
+            feature
+            for feature in budget_features
+            if feature not in input_data.columns
+        ]
+
+        if missing_features:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Automatic budget feature generation "
+                    "is missing required model features: "
+                    + ", ".join(missing_features)
+                ),
+            )
+
+        input_data = input_data[
+            budget_features
+        ]
+
+        prediction = budget_model.predict(
+            input_data
+        )
+
+        predicted_budget = round(
+            float(prediction[0]),
+            2,
+        )
+
+        current_spending = float(
+            features["current_week_spending"]
+        )
+
+        difference = (
+            predicted_budget
+            - current_spending
+        )
+
+        if current_spending == 0:
+            percentage_change = 0.0
+        else:
+            percentage_change = (
+                abs(difference)
+                / current_spending
+                * 100
+            )
+
+        if difference > 0:
+            trend = "Expected Increase"
+            explanation = (
+                "Based on saved transaction history, "
+                "next week's spending is predicted to "
+                f"increase by approximately "
+                f"{percentage_change:.2f}%."
+            )
+        elif difference < 0:
+            trend = "Expected Decrease"
+            explanation = (
+                "Based on saved transaction history, "
+                "next week's spending is predicted to "
+                f"decrease by approximately "
+                f"{percentage_change:.2f}%."
+            )
+        else:
+            trend = "Stable"
+            explanation = (
+                "Based on saved transaction history, "
+                "next week's spending is predicted "
+                "to remain approximately stable."
+            )
+
+        if (
+            feature_result["history"]["history_quality"]
+            == "Low"
+        ):
+            explanation += (
+                " Historical coverage is currently low, "
+                "so this forecast should be treated as "
+                "a preliminary estimate."
+            )
+
+        return {
+            "status": "Success",
+            "message": (
+                "Automatic budget forecast generated "
+                "from saved transaction history."
+            ),
+            "source":
+                "SQLite Saved Transactions",
+            "predicted_next_week_spending":
+                predicted_budget,
+            "current_week_spending":
+                round(current_spending, 2),
+            "predicted_difference":
+                round(difference, 2),
+            "percentage_change":
+                round(percentage_change, 2),
+            "trend": trend,
+            "explanation": explanation,
+            "model":
+                "Gradient Boosting",
+            "model_r2": 0.5974,
+            "model_mae": 4620.89,
+            "model_rmse": 5457.08,
+            "auto_features":
+                features,
+            "history":
+                feature_result["history"],
+            "warnings":
+                feature_result["warnings"],
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print(
+            "Automatic budget prediction error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Automatic budget prediction could not be completed."
+            ),
+        )
+
+
+# ============================================================
+# 15. FRAUD DETECTION ENDPOINT
 # ============================================================
 
 @app.post("/detect_fraud")
@@ -744,7 +1708,7 @@ def detect_fraud(data: FraudInput):
 
 
 # ============================================================
-# 12. AUTOMATIC FRAUD DETECTION FOR SAVED/OCR TRANSACTIONS
+# 16. AUTOMATIC FRAUD DETECTION FOR SAVED/OCR TRANSACTIONS
 # ============================================================
 
 @app.post("/auto_detect_fraud")
@@ -844,7 +1808,7 @@ def auto_detect_fraud(
 
 
 # ============================================================
-# 13. RECEIPT OCR ENDPOINT
+# 17. RECEIPT OCR ENDPOINT
 # ============================================================
 
 @app.post("/ocr_receipt")
@@ -1033,7 +1997,7 @@ async def ocr_receipt(
 
 
 # ============================================================
-# 14. CREATE / SAVE TRANSACTION
+# 18. CREATE / SAVE TRANSACTION
 # ============================================================
 
 @app.post("/transactions")
@@ -1116,7 +2080,7 @@ def create_transaction(
 
 
 # ============================================================
-# 15. GET ALL TRANSACTIONS
+# 19. GET ALL TRANSACTIONS
 # ============================================================
 
 @app.get("/transactions")
@@ -1147,7 +2111,7 @@ def list_transactions():
 
 
 # ============================================================
-# 16. GET LATEST TRANSACTION
+# 20. GET LATEST TRANSACTION
 # ============================================================
 
 @app.get("/transactions/latest")
@@ -1177,7 +2141,7 @@ def latest_transaction():
 
 
 # ============================================================
-# 17. UPDATE TRANSACTION
+# 21. UPDATE TRANSACTION
 # ============================================================
 
 @app.put("/transactions/{transaction_id}")
@@ -1276,7 +2240,7 @@ def edit_transaction(
 
 
 # ============================================================
-# 18. DELETE TRANSACTION
+# 22. DELETE TRANSACTION
 # ============================================================
 
 @app.delete("/transactions/{transaction_id}")
@@ -1338,7 +2302,7 @@ def remove_transaction(
 
 
 # ============================================================
-# 19. LATEST TRANSACTION FRAUD ANALYSIS
+# 23. LATEST TRANSACTION FRAUD ANALYSIS
 # ============================================================
 
 @app.get("/transactions/latest/fraud")
@@ -1393,7 +2357,7 @@ def latest_transaction_fraud():
 
 
 # ============================================================
-# 20. TRANSACTION SUMMARY
+# 24. TRANSACTION SUMMARY
 # ============================================================
 
 @app.get("/transactions/summary")
@@ -1423,7 +2387,7 @@ def transaction_summary():
 
 
 # ============================================================
-# 21. MODEL INFORMATION ENDPOINT
+# 25. MODEL INFORMATION ENDPOINT
 # ============================================================
 
 @app.get("/model_info")
@@ -1448,6 +2412,11 @@ def model_info():
                 if budget_features is not None
                 else 0
             ),
+            "auto_transaction_features": True,
+            "auto_features_endpoint":
+                "/budget/auto-features",
+            "auto_prediction_endpoint":
+                "/budget/auto-predict",
         },
 
         "fraud_detection": {
@@ -1482,6 +2451,11 @@ def model_info():
             ),
             "selected_model":
                 "Random Forest",
+            "auto_transaction_features": True,
+            "auto_features_endpoint":
+                "/amount/auto-features",
+            "auto_prediction_endpoint":
+                "/amount/auto-predict",
         },
 
         "receipt_ocr": {

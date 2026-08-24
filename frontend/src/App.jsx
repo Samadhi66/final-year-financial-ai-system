@@ -106,6 +106,15 @@ function App() {
   const [budgetValidation, setBudgetValidation] =
     useState({});
 
+  const [autoBudgetFeatures, setAutoBudgetFeatures] =
+    useState(null);
+
+  const [autoBudgetFeatureLoading, setAutoBudgetFeatureLoading] =
+    useState(false);
+
+  const [autoBudgetFeatureError, setAutoBudgetFeatureError] =
+    useState("");
+
   /* =======================================================
      FRAUD STATE
      ======================================================= */
@@ -129,6 +138,11 @@ function App() {
 
   const [fraudValidation, setFraudValidation] =
     useState({});
+
+  const [
+    latestFraudEncodedFeatures,
+    setLatestFraudEncodedFeatures,
+  ] = useState(null);
 
   /* =======================================================
      AMOUNT PREDICTION STATE
@@ -158,6 +172,15 @@ function App() {
 
   const [amountValidation, setAmountValidation] =
     useState({});
+
+  const [autoAmountFeatures, setAutoAmountFeatures] =
+    useState(null);
+
+  const [autoAmountFeatureLoading, setAutoAmountFeatureLoading] =
+    useState(false);
+
+  const [autoAmountFeatureError, setAutoAmountFeatureError] =
+    useState("");
 
   /* =======================================================
      LIVE TRANSACTION DASHBOARD STATE
@@ -850,6 +873,120 @@ function App() {
     }
   };
 
+  const loadAutoBudgetFeatures = async () => {
+    setAutoBudgetFeatureLoading(true);
+    setAutoBudgetFeatureError("");
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/budget/auto-features"
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      setAutoBudgetFeatures(result);
+
+      if (
+        result.status === "Insufficient Data" ||
+        result.can_predict === false
+      ) {
+        setAutoBudgetFeatureError(
+          result.message ||
+            "More saved transaction history is required."
+        );
+      }
+    } catch (error) {
+      console.error(error);
+
+      setAutoBudgetFeatures(null);
+
+      setAutoBudgetFeatureError(
+        error.message ||
+          "Automatic budget features could not be loaded."
+      );
+    } finally {
+      setAutoBudgetFeatureLoading(false);
+    }
+  };
+
+  const handleAutoBudgetPrediction = async () => {
+    setBudgetLoading(true);
+    setBudgetError("");
+    setBudgetResult(null);
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/budget/auto-predict",
+        {
+          method: "POST",
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (
+        result.status === "Insufficient Data" ||
+        result.can_predict === false
+      ) {
+        throw new Error(
+          result.message ||
+            "More transaction history is required before forecasting."
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            result.error ||
+            "Automatic budget prediction failed."
+        );
+      }
+
+      setBudgetResult(result);
+
+      setAutoBudgetFeatures({
+        status: "Success",
+        can_predict: true,
+        message:
+          "Automatic budget features generated from saved transaction history.",
+        features: result.auto_features || null,
+        history: result.history || null,
+        warnings: result.warnings || [],
+      });
+    } catch (error) {
+      console.error(error);
+
+      setBudgetError(
+        error.message ||
+          "Automatic budget prediction could not be completed."
+      );
+    } finally {
+      setBudgetLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activePage === "budget") {
+      loadAutoBudgetFeatures();
+    }
+  }, [activePage]);
+
   /* =======================================================
      FRAUD API
      ======================================================= */
@@ -1010,6 +1147,133 @@ function App() {
     }
   };
 
+  const loadAutoAmountFeatures = async () => {
+    setAutoAmountFeatureLoading(true);
+    setAutoAmountFeatureError("");
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/amount/auto-features"
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      setAutoAmountFeatures(result);
+
+      if (
+        result.status === "Insufficient Data" ||
+        result.can_predict === false
+      ) {
+        setAutoAmountFeatureError(
+          result.message ||
+            "More saved transaction data is required."
+        );
+      }
+
+      if (result.transaction) {
+        setLatestSavedTransaction(
+          result.transaction
+        );
+      }
+    } catch (error) {
+      console.error(error);
+
+      setAutoAmountFeatures(null);
+
+      setAutoAmountFeatureError(
+        error.message ||
+          "Automatic amount features could not be loaded."
+      );
+    } finally {
+      setAutoAmountFeatureLoading(false);
+    }
+  };
+
+  const handleAutoAmountPrediction = async () => {
+    setAmountLoading(true);
+    setAmountError("");
+    setAmountResult(null);
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/amount/auto-predict",
+        {
+          method: "POST",
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (
+        result.status === "Insufficient Data" ||
+        result.can_predict === false
+      ) {
+        throw new Error(
+          result.message ||
+            "More saved transaction history is required before amount prediction."
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            result.error ||
+            "Automatic amount prediction failed."
+        );
+      }
+
+      setAmountResult(result);
+
+      setAutoAmountFeatures({
+        status: "Success",
+        can_predict: true,
+        message:
+          "Automatic amount features generated from saved transaction history.",
+        transaction: result.transaction || null,
+        features: result.auto_features || null,
+        history: result.history || null,
+        warnings: result.warnings || [],
+      });
+
+      if (result.transaction) {
+        setLatestSavedTransaction(
+          result.transaction
+        );
+      }
+    } catch (error) {
+      console.error(error);
+
+      setAmountError(
+        error.message ||
+          "Automatic amount prediction could not be completed."
+      );
+    } finally {
+      setAmountLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activePage === "amount") {
+      loadAutoAmountFeatures();
+    }
+  }, [activePage]);
+
   /* =======================================================
      LIVE TRANSACTION DASHBOARD API
      ======================================================= */
@@ -1109,9 +1373,133 @@ function App() {
         setAutoFraudResult(
           latestFraudData.fraud_analysis
         );
+
+        setLatestFraudEncodedFeatures(
+          latestFraudData.encoded_features ||
+            null
+        );
+
         setAutoFraudError("");
       } else {
         setAutoFraudResult(null);
+        setLatestFraudEncodedFeatures(null);
+      }
+
+      /*
+       * AI prediction endpoints are intentionally treated
+       * as optional dashboard enhancements. If one model
+       * is temporarily unavailable, saved transaction data
+       * and the other insights can still load normally.
+       */
+      const [
+        budgetPredictionSettled,
+        amountPredictionSettled,
+      ] = await Promise.allSettled([
+        fetch(
+          "http://127.0.0.1:8000/budget/auto-predict",
+          {
+            method: "POST",
+          }
+        ).then(async (response) => {
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              result.detail ||
+                result.message ||
+                `Budget server returned ${response.status}`
+            );
+          }
+
+          return result;
+        }),
+
+        fetch(
+          "http://127.0.0.1:8000/amount/auto-predict",
+          {
+            method: "POST",
+          }
+        ).then(async (response) => {
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              result.detail ||
+                result.message ||
+                `Amount server returned ${response.status}`
+            );
+          }
+
+          return result;
+        }),
+      ]);
+
+      if (
+        budgetPredictionSettled.status ===
+        "fulfilled"
+      ) {
+        const budgetData =
+          budgetPredictionSettled.value;
+
+        if (
+          budgetData.status === "Success"
+        ) {
+          setBudgetResult(
+            budgetData
+          );
+
+          setAutoBudgetFeatures({
+            status: "Success",
+            can_predict: true,
+            message:
+              "Automatic budget features generated from saved transaction history.",
+            features:
+              budgetData.auto_features ||
+              null,
+            history:
+              budgetData.history ||
+              null,
+            warnings:
+              budgetData.warnings ||
+              [],
+          });
+        }
+      }
+
+      if (
+        amountPredictionSettled.status ===
+        "fulfilled"
+      ) {
+        const amountData =
+          amountPredictionSettled.value;
+
+        if (
+          amountData.status === "Success"
+        ) {
+          setAmountResult(
+            amountData
+          );
+
+          setAutoAmountFeatures({
+            status: "Success",
+            can_predict: true,
+            message:
+              "Automatic amount features generated from saved transaction history.",
+            transaction:
+              amountData.transaction ||
+              latestData.transaction ||
+              null,
+            features:
+              amountData.auto_features ||
+              null,
+            history:
+              amountData.history ||
+              null,
+            warnings:
+              amountData.warnings ||
+              [],
+          });
+        }
       }
     } catch (error) {
       console.error(error);
@@ -1446,6 +1834,76 @@ function App() {
     }
   };
 
+  const loadLatestFraudAnalysis = async () => {
+    setAutoFraudLoading(true);
+    setAutoFraudError("");
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/transactions/latest/fraud"
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            "Latest transaction fraud analysis failed."
+        );
+      }
+
+      if (
+        !result.has_transaction ||
+        !result.transaction
+      ) {
+        setLatestSavedTransaction(null);
+        setAutoFraudResult(null);
+        setLatestFraudEncodedFeatures(null);
+
+        setAutoFraudError(
+          "No saved transaction is available for fraud analysis."
+        );
+
+        return;
+      }
+
+      setLatestSavedTransaction(
+        result.transaction
+      );
+
+      setLatestFraudEncodedFeatures(
+        result.encoded_features || null
+      );
+
+      setAutoFraudResult(
+        result.fraud_analysis || null
+      );
+    } catch (error) {
+      console.error(error);
+
+      setAutoFraudError(
+        error.message ||
+          "Latest transaction fraud analysis could not be completed."
+      );
+    } finally {
+      setAutoFraudLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activePage === "fraud") {
+      loadLatestFraudAnalysis();
+    }
+  }, [activePage]);
+
   /* =======================================================
      RECEIPT OCR API
      ======================================================= */
@@ -1744,9 +2202,50 @@ function App() {
             </p>
           </div>
 
-          <div className="system-status">
-            <span className="status-dot"></span>
-            AI & Transaction System Active
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
+            <div className="system-status">
+              <span className="status-dot"></span>
+              AI & Transaction System Active
+            </div>
+
+            <button
+              type="button"
+              onClick={
+                loadTransactionDashboard
+              }
+              disabled={
+                transactionDashboardLoading
+              }
+              style={{
+                border:
+                  "1px solid #dbe3ef",
+                background: "#ffffff",
+                color: "#0f172a",
+                borderRadius: "999px",
+                padding: "10px 14px",
+                fontWeight: "700",
+                cursor:
+                  transactionDashboardLoading
+                    ? "not-allowed"
+                    : "pointer",
+                opacity:
+                  transactionDashboardLoading
+                    ? 0.65
+                    : 1,
+              }}
+            >
+              {transactionDashboardLoading
+                ? "Refreshing AI..."
+                : "Refresh All AI"}
+            </button>
           </div>
         </header>
 
@@ -2410,11 +2909,13 @@ function App() {
                 </span>
 
                 <strong>
-                  {latestBudget !== null
+                  {transactionDashboardLoading
+                    ? "Updating..."
+                    : latestBudget !== null
                     ? `Rs. ${Number(
                         latestBudget
                       ).toLocaleString()}`
-                    : "Not run"}
+                    : "Unavailable"}
                 </strong>
               </div>
 
@@ -2461,11 +2962,13 @@ function App() {
                 </span>
 
                 <strong>
-                  {latestAmount !== null
+                  {transactionDashboardLoading
+                    ? "Updating..."
+                    : latestAmount !== null
                     ? `Rs. ${Number(
                         latestAmount
                       ).toLocaleString()}`
-                    : "Not run"}
+                    : "Unavailable"}
                 </strong>
               </div>
             </div>
@@ -2476,7 +2979,7 @@ function App() {
               </span>
 
               <strong>
-                4 / 4
+                5 / 5
               </strong>
             </div>
           </div>
@@ -2511,7 +3014,7 @@ function App() {
                   <p>
                     {budgetResult
                       ? budgetResult.explanation
-                      : "Generate a budget forecast to view AI spending insights."}
+                      : "Automatic budget intelligence is not currently available."}
                   </p>
                 </div>
               </div>
@@ -2542,6 +3045,24 @@ function App() {
                           2
                         )}% fraud probability.`
                       : "Analyse a transaction or save an OCR expense to receive behavioral fraud intelligence."}
+                  </p>
+                </div>
+              </div>
+
+              <div className="insight-item">
+                <span className="insight-dot purple"></span>
+
+                <div>
+                  <strong>
+                    Amount Intelligence
+                  </strong>
+
+                  <p>
+                    {amountResult
+                      ? `Next transaction estimate: Rs. ${Number(
+                          amountResult.predicted_amount
+                        ).toLocaleString()} · ${amountResult.trend}.`
+                      : "Automatic amount intelligence is not currently available."}
                   </p>
                 </div>
               </div>
@@ -2615,6 +3136,16 @@ function App() {
                   Online
                 </strong>
               </div>
+
+              <div>
+                <span>
+                  Live AI Orchestration
+                </span>
+
+                <strong className="online-text">
+                  Online
+                </strong>
+              </div>
             </div>
 
             <div className="system-score">
@@ -2637,6 +3168,23 @@ function App() {
      ======================================================= */
 
   const renderBudgetPrediction = () => {
+    const features =
+      autoBudgetFeatures?.features || null;
+
+    const history =
+      autoBudgetFeatures?.history || null;
+
+    const warnings =
+      Array.isArray(
+        autoBudgetFeatures?.warnings
+      )
+        ? autoBudgetFeatures.warnings
+        : [];
+
+    const historyQuality =
+      history?.history_quality ||
+      "Not available";
+
     return (
       <>
         <header>
@@ -2650,14 +3198,16 @@ function App() {
             </h1>
 
             <p className="subtitle">
-              Predict next week's spending using
-              the trained Gradient Boosting model.
+              Generate next week's spending
+              forecast automatically from saved
+              transaction history using the trained
+              Gradient Boosting model.
             </p>
           </div>
 
           <div className="system-status">
             <span className="status-dot"></span>
-            Model Ready
+            Live Transaction Data Connected
           </div>
         </header>
 
@@ -2666,11 +3216,11 @@ function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">
-                  INPUT DATA
+                  LIVE INPUT DATA
                 </p>
 
                 <h2>
-                  Financial Behaviour
+                  Automatic Financial Behaviour
                 </h2>
               </div>
 
@@ -2679,308 +3229,314 @@ function App() {
               </span>
             </div>
 
-            <form
-              className="prediction-form"
-              onSubmit={
-                handleBudgetPrediction
-              }
-            >
-              <div className="form-section">
-                <h3>
-                  Current Spending
-                </h3>
+            {autoBudgetFeatureLoading ? (
+              <div className="explanation-box">
+                <span>
+                  Loading Transaction History
+                </span>
 
-                <div className="form-grid">
-                  <InputField
-                    label="Current Week Spending"
-                    name="current_week_spending"
-                    value={
-                      budgetForm.current_week_spending
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.current_week_spending
-                    }
-                  />
-
-                  <InputField
-                    label="Current Transaction Count"
-                    name="current_transaction_count"
-                    value={
-                      budgetForm.current_transaction_count
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.current_transaction_count
-                    }
-                    min="0"
-                  />
-
-                  <InputField
-                    label="Average Transaction Amount"
-                    name="current_avg_transaction_amount"
-                    value={
-                      budgetForm.current_avg_transaction_amount
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.current_avg_transaction_amount
-                    }
-                  />
-
-                  <InputField
-                    label="Current Fraud Count"
-                    name="current_fraud_count"
-                    value={
-                      budgetForm.current_fraud_count
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.current_fraud_count
-                    }
-                    min="0"
-                  />
-                </div>
+                <p>
+                  Calculating budget features from
+                  your saved SQLite transactions...
+                </p>
               </div>
+            ) : (
+              <>
+                {autoBudgetFeatureError && (
+                  <div className="error-box">
+                    {autoBudgetFeatureError}
+                  </div>
+                )}
 
-              <div className="form-section">
-                <h3>
-                  Historical Spending
-                </h3>
+                {features && (
+                  <>
+                    <div
+                      className="form-section"
+                      style={{
+                        marginTop: "8px",
+                      }}
+                    >
+                      <h3>
+                        Current Spending
+                      </h3>
 
-                <div className="form-grid">
-                  <InputField
-                    label="1 Week Ago"
-                    name="spending_1_week_ago"
-                    value={
-                      budgetForm.spending_1_week_ago
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.spending_1_week_ago
-                    }
-                  />
+                      <div className="result-stat-grid">
+                        <div>
+                          <span>
+                            Current Week Spending
+                          </span>
 
-                  <InputField
-                    label="2 Weeks Ago"
-                    name="spending_2_weeks_ago"
-                    value={
-                      budgetForm.spending_2_weeks_ago
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.spending_2_weeks_ago
-                    }
-                  />
+                          <strong>
+                            Rs.{" "}
+                            {Number(
+                              features.current_week_spending ||
+                                0
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
 
-                  <InputField
-                    label="3 Weeks Ago"
-                    name="spending_3_weeks_ago"
-                    value={
-                      budgetForm.spending_3_weeks_ago
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.spending_3_weeks_ago
-                    }
-                  />
+                        <div>
+                          <span>
+                            Transactions
+                          </span>
 
-                  <InputField
-                    label="4 Weeks Ago"
-                    name="spending_4_weeks_ago"
-                    value={
-                      budgetForm.spending_4_weeks_ago
+                          <strong>
+                            {
+                              features.current_transaction_count ??
+                              0
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Average Transaction
+                          </span>
+
+                          <strong>
+                            Rs.{" "}
+                            {Number(
+                              features.current_avg_transaction_amount ||
+                                0
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Fraud Count
+                          </span>
+
+                          <strong>
+                            {
+                              features.current_fraud_count ??
+                              0
+                            }
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-section">
+                      <h3>
+                        Historical Spending
+                      </h3>
+
+                      <div className="result-stat-grid">
+                        <div>
+                          <span>
+                            1 Week Ago
+                          </span>
+
+                          <strong>
+                            Rs.{" "}
+                            {Number(
+                              features.spending_1_week_ago ||
+                                0
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            2 Weeks Ago
+                          </span>
+
+                          <strong>
+                            Rs.{" "}
+                            {Number(
+                              features.spending_2_weeks_ago ||
+                                0
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Previous 4 Week Avg
+                          </span>
+
+                          <strong>
+                            Rs.{" "}
+                            {Number(
+                              features.previous_4_week_avg ||
+                                0
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Spending Change
+                          </span>
+
+                          <strong>
+                            Rs.{" "}
+                            {Number(
+                              features.spending_change ||
+                                0
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-section">
+                      <h3>
+                        History Quality
+                      </h3>
+
+                      <div className="result-stat-grid">
+                        <div>
+                          <span>
+                            Quality
+                          </span>
+
+                          <strong>
+                            {historyQuality}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Valid Transactions
+                          </span>
+
+                          <strong>
+                            {
+                              history?.valid_transaction_count ??
+                              0
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Observed Weeks
+                          </span>
+
+                          <strong>
+                            {
+                              history?.observed_week_count ??
+                              0
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Imputed Weeks
+                          </span>
+
+                          <strong>
+                            {
+                              history?.imputed_week_count ??
+                              0
+                            }
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {warnings.length > 0 && (
+                  <div
+                    className="error-box"
+                    style={{
+                      marginTop: "16px",
+                    }}
+                  >
+                    <strong>
+                      Forecast Data Notice
+                    </strong>
+
+                    <ul
+                      style={{
+                        margin:
+                          "10px 0 0 18px",
+                      }}
+                    >
+                      {warnings.map(
+                        (warning, index) => (
+                          <li key={index}>
+                            {warning}
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    marginTop: "20px",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={
+                      handleAutoBudgetPrediction
                     }
-                    onChange={
-                      handleBudgetChange
+                    disabled={
+                      budgetLoading ||
+                      autoBudgetFeatureLoading ||
+                      autoBudgetFeatures?.can_predict ===
+                        false
                     }
-                    error={
-                      budgetValidation.spending_4_weeks_ago
+                    style={{
+                      flex: 1,
+                    }}
+                  >
+                    {budgetLoading
+                      ? "Generating AI Forecast..."
+                      : "Generate Automatic Forecast"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={
+                      loadAutoBudgetFeatures
                     }
-                  />
+                    disabled={
+                      autoBudgetFeatureLoading ||
+                      budgetLoading
+                    }
+                    style={{
+                      border:
+                        "1px solid #dbe3ef",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                      borderRadius: "9px",
+                      padding: "11px 16px",
+                      fontWeight: "700",
+                      cursor:
+                        autoBudgetFeatureLoading ||
+                        budgetLoading
+                          ? "not-allowed"
+                          : "pointer",
+                    }}
+                  >
+                    Refresh Live Data
+                  </button>
                 </div>
-              </div>
 
-              <div className="form-section">
-                <h3>
-                  Rolling Behaviour
-                </h3>
-
-                <div className="form-grid">
-                  <InputField
-                    label="Previous 2 Week Average"
-                    name="previous_2_week_avg"
-                    value={
-                      budgetForm.previous_2_week_avg
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.previous_2_week_avg
-                    }
-                  />
-
-                  <InputField
-                    label="Previous 4 Week Average"
-                    name="previous_4_week_avg"
-                    value={
-                      budgetForm.previous_4_week_avg
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.previous_4_week_avg
-                    }
-                  />
-
-                  <InputField
-                    label="Previous 8 Week Average"
-                    name="previous_8_week_avg"
-                    value={
-                      budgetForm.previous_8_week_avg
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.previous_8_week_avg
-                    }
-                  />
-
-                  <InputField
-                    label="Previous Transaction Count"
-                    name="previous_transaction_count"
-                    value={
-                      budgetForm.previous_transaction_count
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.previous_transaction_count
-                    }
-                  />
-
-                  <InputField
-                    label="Previous Avg Transaction"
-                    name="previous_avg_transaction_amount"
-                    value={
-                      budgetForm.previous_avg_transaction_amount
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.previous_avg_transaction_amount
-                    }
-                    step="0.01"
-                  />
-                </div>
-              </div>
-
-              <div className="form-section">
-                <h3>
-                  Trend & Seasonality
-                </h3>
-
-                <div className="form-grid">
-                  <InputField
-                    label="Spending Change"
-                    name="spending_change"
-                    value={
-                      budgetForm.spending_change
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.spending_change
-                    }
-                  />
-
-                  <InputField
-                    label="Spending Change %"
-                    name="spending_change_percentage"
-                    value={
-                      budgetForm.spending_change_percentage
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.spending_change_percentage
-                    }
-                    step="0.0001"
-                  />
-
-                  <InputField
-                    label="Week Sin"
-                    name="week_sin"
-                    value={
-                      budgetForm.week_sin
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.week_sin
-                    }
-                    step="0.001"
-                    min="-1"
-                    max="1"
-                  />
-
-                  <InputField
-                    label="Week Cos"
-                    name="week_cos"
-                    value={
-                      budgetForm.week_cos
-                    }
-                    onChange={
-                      handleBudgetChange
-                    }
-                    error={
-                      budgetValidation.week_cos
-                    }
-                    step="0.001"
-                    min="-1"
-                    max="1"
-                  />
-                </div>
-              </div>
-
-              {budgetError && (
-                <div className="error-box">
-                  {budgetError}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                className="primary-button"
-                disabled={budgetLoading}
-              >
-                {budgetLoading
-                  ? "Generating Prediction..."
-                  : "Generate Budget Prediction"}
-              </button>
-            </form>
+                {budgetError && (
+                  <div
+                    className="error-box"
+                    style={{
+                      marginTop: "16px",
+                    }}
+                  >
+                    {budgetError}
+                  </div>
+                )}
+              </>
+            )}
           </section>
 
           <section className="prediction-result-card">
@@ -2999,13 +3555,13 @@ function App() {
                 </div>
 
                 <h3>
-                  Ready to Predict
+                  Ready for Automatic Forecast
                 </h3>
 
                 <p>
-                  Enter valid financial behaviour
-                  information to generate an
-                  AI-powered budget forecast.
+                  Saved transactions are converted
+                  into model features automatically.
+                  Generate the forecast when ready.
                 </p>
               </div>
             )}
@@ -3064,11 +3620,36 @@ function App() {
 
                   <div>
                     <span>
+                      History Quality
+                    </span>
+
+                    <strong>
+                      {
+                        budgetResult.history
+                          ?.history_quality ||
+                        historyQuality
+                      }
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
                       Model R²
                     </span>
 
                     <strong>
                       {budgetResult.model_r2}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
+                      Data Source
+                    </span>
+
+                    <strong>
+                      {budgetResult.source ||
+                        "Saved Transactions"}
                     </strong>
                   </div>
                 </div>
@@ -3096,6 +3677,41 @@ function App() {
                     {budgetResult.explanation}
                   </p>
                 </div>
+
+                {Array.isArray(
+                  budgetResult.warnings
+                ) &&
+                  budgetResult.warnings.length >
+                    0 && (
+                    <div
+                      className="error-box"
+                      style={{
+                        marginTop: "16px",
+                      }}
+                    >
+                      <strong>
+                        Forecast Reliability Notice
+                      </strong>
+
+                      <ul
+                        style={{
+                          margin:
+                            "10px 0 0 18px",
+                        }}
+                      >
+                        {budgetResult.warnings.map(
+                          (
+                            warning,
+                            index
+                          ) => (
+                            <li key={index}>
+                              {warning}
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+                  )}
               </div>
             )}
           </section>
@@ -3109,6 +3725,17 @@ function App() {
      ======================================================= */
 
   const renderFraudDetection = () => {
+    const liveFraudResult =
+      autoFraudResult || null;
+
+    const fraudProbability =
+      liveFraudResult?.fraud_probability ??
+      null;
+
+    const threshold =
+      liveFraudResult?.threshold ??
+      0.45;
+
     return (
       <>
         <header>
@@ -3122,15 +3749,15 @@ function App() {
             </h1>
 
             <p className="subtitle">
-              Analyse transaction behaviour
-              using the trained Random Forest
-              fraud detection model.
+              Analyse the latest saved transaction
+              automatically using the trained
+              Random Forest fraud detection model.
             </p>
           </div>
 
           <div className="system-status">
             <span className="status-dot"></span>
-            Fraud Model Ready
+            Live Fraud Intelligence Connected
           </div>
         </header>
 
@@ -3139,11 +3766,11 @@ function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">
-                  TRANSACTION INPUT
+                  LIVE TRANSACTION DATA
                 </p>
 
                 <h2>
-                  Transaction Details
+                  Latest Saved Transaction
                 </h2>
               </div>
 
@@ -3152,121 +3779,226 @@ function App() {
               </span>
             </div>
 
-            <form
-              onSubmit={
-                handleFraudDetection
-              }
-            >
-              <div className="form-section">
+            {!latestSavedTransaction && (
+              <div className="result-placeholder">
+                <div className="result-icon">
+                  Rs
+                </div>
+
                 <h3>
-                  Financial Transaction
+                  No Saved Transaction
                 </h3>
 
-                <div className="form-grid">
-                  <InputField
-                    label="Transaction Amount"
-                    name="amount"
-                    value={
-                      fraudForm.amount
-                    }
-                    onChange={
-                      handleFraudChange
-                    }
-                    error={
-                      fraudValidation.amount
-                    }
-                  />
-
-                  <InputField
-                    label="Category Code"
-                    name="category"
-                    value={
-                      fraudForm.category
-                    }
-                    onChange={
-                      handleFraudChange
-                    }
-                    error={
-                      fraudValidation.category
-                    }
-                  />
-
-                  <InputField
-                    label="Merchant Code"
-                    name="merchant"
-                    value={
-                      fraudForm.merchant
-                    }
-                    onChange={
-                      handleFraudChange
-                    }
-                    error={
-                      fraudValidation.merchant
-                    }
-                  />
-
-                  <InputField
-                    label="Payment Method Code"
-                    name="payment_method"
-                    value={
-                      fraudForm.payment_method
-                    }
-                    onChange={
-                      handleFraudChange
-                    }
-                    error={
-                      fraudValidation.payment_method
-                    }
-                  />
-
-                  <InputField
-                    label="Location Code"
-                    name="location"
-                    value={
-                      fraudForm.location
-                    }
-                    onChange={
-                      handleFraudChange
-                    }
-                    error={
-                      fraudValidation.location
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="fraud-info-box">
-                <span>
-                  Optimized Fraud Threshold
-                </span>
-
-                <strong>
-                  0.45
-                </strong>
-
                 <p>
-                  Transactions with an AI fraud
-                  probability equal to or above
-                  45% are classified as suspicious.
+                  Save a transaction from Receipt OCR
+                  or the transaction system before
+                  running automatic fraud analysis.
                 </p>
               </div>
+            )}
 
-              {fraudError && (
-                <div className="error-box">
-                  {fraudError}
+            {latestSavedTransaction && (
+              <>
+                <div className="form-section">
+                  <h3>
+                    Transaction Details
+                  </h3>
+
+                  <div className="result-stat-grid">
+                    <div>
+                      <span>
+                        Merchant
+                      </span>
+
+                      <strong>
+                        {
+                          latestSavedTransaction.merchant
+                        }
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Amount
+                      </span>
+
+                      <strong>
+                        Rs.{" "}
+                        {Number(
+                          latestSavedTransaction.amount ||
+                            0
+                        ).toLocaleString()}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Category
+                      </span>
+
+                      <strong>
+                        {
+                          latestSavedTransaction.category
+                        }
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Transaction Date
+                      </span>
+
+                      <strong>
+                        {
+                          latestSavedTransaction.transaction_date
+                        }
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Source
+                      </span>
+
+                      <strong>
+                        {
+                          latestSavedTransaction.source ||
+                          "Manual"
+                        }
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Transaction ID
+                      </span>
+
+                      <strong>
+                        #
+                        {
+                          latestSavedTransaction.id
+                        }
+                      </strong>
+                    </div>
+                  </div>
                 </div>
-              )}
+
+                <div className="form-section">
+                  <h3>
+                    Automatic Feature Encoding
+                  </h3>
+
+                  <div className="result-stat-grid">
+                    <div>
+                      <span>
+                        Category Code
+                      </span>
+
+                      <strong>
+                        {
+                          latestFraudEncodedFeatures
+                            ?.category ?? "—"
+                        }
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>
+                        Merchant Code
+                      </span>
+
+                      <strong>
+                        {
+                          latestFraudEncodedFeatures
+                            ?.merchant ?? "—"
+                        }
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="fraud-info-box">
+                  <span>
+                    Optimized Fraud Threshold
+                  </span>
+
+                  <strong>
+                    {Number(
+                      threshold
+                    ).toFixed(2)}
+                  </strong>
+
+                  <p>
+                    Transactions with an AI fraud
+                    probability equal to or above
+                    {` ${(
+                      Number(threshold) * 100
+                    ).toFixed(0)}% `}
+                    are classified as suspicious.
+                  </p>
+                </div>
+              </>
+            )}
+
+            {autoFraudError && (
+              <div className="error-box">
+                {autoFraudError}
+              </div>
+            )}
+
+            <div
+              style={{
+                display: "flex",
+                gap: "12px",
+                flexWrap: "wrap",
+                marginTop: "18px",
+              }}
+            >
+              <button
+                type="button"
+                className="primary-button"
+                onClick={
+                  loadLatestFraudAnalysis
+                }
+                disabled={
+                  autoFraudLoading ||
+                  !latestSavedTransaction
+                }
+                style={{
+                  flex: 1,
+                }}
+              >
+                {autoFraudLoading
+                  ? "Analysing Latest Transaction..."
+                  : "Analyse Latest Transaction"}
+              </button>
 
               <button
-                type="submit"
-                className="primary-button"
-                disabled={fraudLoading}
+                type="button"
+                onClick={async () => {
+                  await loadTransactionDashboard();
+                  await loadLatestFraudAnalysis();
+                }}
+                disabled={
+                  autoFraudLoading
+                }
+                style={{
+                  border:
+                    "1px solid #dbe3ef",
+                  background: "#ffffff",
+                  color: "#0f172a",
+                  borderRadius: "9px",
+                  padding: "11px 16px",
+                  fontWeight: "700",
+                  cursor:
+                    autoFraudLoading
+                      ? "not-allowed"
+                      : "pointer",
+                }}
               >
-                {fraudLoading
-                  ? "Analysing Transaction..."
-                  : "Analyse Fraud Risk"}
+                Refresh Live Data
               </button>
-            </form>
+            </div>
           </section>
 
           <section className="prediction-result-card">
@@ -3278,7 +4010,7 @@ function App() {
               Fraud Assessment
             </h2>
 
-            {!fraudResult && (
+            {!liveFraudResult && (
               <div className="result-placeholder">
                 <div className="result-icon">
                   AI
@@ -3289,18 +4021,19 @@ function App() {
                 </h3>
 
                 <p>
-                  Enter valid transaction
-                  details to receive an
-                  AI-powered fraud assessment.
+                  The latest saved transaction will
+                  be encoded automatically and
+                  evaluated by the Random Forest
+                  fraud model.
                 </p>
               </div>
             )}
 
-            {fraudResult && (
+            {liveFraudResult && (
               <div className="result-content">
                 <div
                   className={`fraud-result-banner ${
-                    fraudResult.fraud_status ===
+                    liveFraudResult.fraud_status ===
                     "Fraud Detected"
                       ? "fraud"
                       : "normal"
@@ -3311,11 +4044,16 @@ function App() {
                   </span>
 
                   <h3>
-                    {fraudResult.fraud_status}
+                    {
+                      liveFraudResult.fraud_status
+                    }
                   </h3>
 
                   <p>
-                    {fraudResult.risk_level} Risk
+                    {
+                      liveFraudResult.risk_level
+                    }{" "}
+                    Risk
                   </p>
                 </div>
 
@@ -3328,7 +4066,7 @@ function App() {
                     <strong>
                       {(
                         Number(
-                          fraudResult.fraud_probability
+                          fraudProbability || 0
                         ) * 100
                       ).toFixed(2)}
                       %
@@ -3343,7 +4081,7 @@ function App() {
                     <strong>
                       {(
                         Number(
-                          fraudResult.threshold
+                          threshold
                         ) * 100
                       ).toFixed(0)}
                       %
@@ -3356,7 +4094,9 @@ function App() {
                     </span>
 
                     <strong>
-                      {fraudResult.risk_level}
+                      {
+                        liveFraudResult.risk_level
+                      }
                     </strong>
                   </div>
 
@@ -3373,10 +4113,13 @@ function App() {
 
                 <div
                   className={`risk-badge ${
-                    fraudResult.risk_level?.toLowerCase()
+                    liveFraudResult.risk_level?.toLowerCase()
                   }`}
                 >
-                  {fraudResult.risk_level} Risk
+                  {
+                    liveFraudResult.risk_level
+                  }{" "}
+                  Risk
                 </div>
 
                 <div className="explanation-box">
@@ -3385,7 +4128,7 @@ function App() {
                   </span>
 
                   <ul className="risk-reason-list">
-                    {fraudResult.risk_reasons?.map(
+                    {liveFraudResult.risk_reasons?.map(
                       (
                         reason,
                         index
@@ -3407,7 +4150,7 @@ function App() {
                     <strong>
                       {(
                         Number(
-                          fraudResult.fraud_probability
+                          fraudProbability || 0
                         ) * 100
                       ).toFixed(1)}
                       %
@@ -3417,7 +4160,7 @@ function App() {
                   <div className="probability-track">
                     <div
                       className={`probability-fill ${
-                        fraudResult.fraud_status ===
+                        liveFraudResult.fraud_status ===
                         "Fraud Detected"
                           ? "danger"
                           : "safe"
@@ -3425,7 +4168,7 @@ function App() {
                       style={{
                         width: `${Math.min(
                           Number(
-                            fraudResult.fraud_probability
+                            fraudProbability || 0
                           ) * 100,
                           100
                         )}%`,
@@ -3437,7 +4180,7 @@ function App() {
                       style={{
                         left: `${
                           Number(
-                            fraudResult.threshold
+                            threshold
                           ) * 100
                         }%`,
                       }}
@@ -3450,13 +4193,34 @@ function App() {
                     </span>
 
                     <span>
-                      Threshold 45%
+                      Threshold{" "}
+                      {(
+                        Number(
+                          threshold
+                        ) * 100
+                      ).toFixed(0)}
+                      %
                     </span>
 
                     <span>
                       100%
                     </span>
                   </div>
+                </div>
+
+                <div className="explanation-box">
+                  <span>
+                    Live Data Source
+                  </span>
+
+                  <p>
+                    This assessment uses the latest
+                    transaction saved in the SQLite
+                    transaction database. Category and
+                    merchant values are encoded
+                    automatically before model
+                    inference.
+                  </p>
                 </div>
               </div>
             )}
@@ -3471,12 +4235,30 @@ function App() {
      ======================================================= */
 
   const renderAmountPrediction = () => {
+    const featureData =
+      autoAmountFeatures?.features || null;
+
+    const transactionData =
+      autoAmountFeatures?.transaction ||
+      latestSavedTransaction ||
+      null;
+
+    const amountHistory =
+      autoAmountFeatures?.history || null;
+
+    const amountWarnings =
+      Array.isArray(
+        autoAmountFeatures?.warnings
+      )
+        ? autoAmountFeatures.warnings
+        : [];
+
     return (
       <>
         <header>
           <div>
             <p className="eyebrow">
-              SMART TRANSACTION ESTIMATION
+              AI TRANSACTION INTELLIGENCE
             </p>
 
             <h1>
@@ -3484,15 +4266,16 @@ function App() {
             </h1>
 
             <p className="subtitle">
-              Estimate a transaction amount
-              using historical financial
-              behaviour and machine learning.
+              Predict the next transaction amount
+              automatically from the latest saved
+              transaction, merchant behaviour,
+              category context and calendar features.
             </p>
           </div>
 
           <div className="system-status">
             <span className="status-dot"></span>
-            Prediction Model Ready
+            Live Amount Intelligence Connected
           </div>
         </header>
 
@@ -3501,11 +4284,11 @@ function App() {
             <div className="section-heading">
               <div>
                 <p className="eyebrow">
-                  TRANSACTION FEATURES
+                  LIVE TRANSACTION DATA
                 </p>
 
                 <h2>
-                  Prediction Inputs
+                  Automatic Prediction Inputs
                 </h2>
               </div>
 
@@ -3514,214 +4297,417 @@ function App() {
               </span>
             </div>
 
-            <form
-              onSubmit={
-                handleAmountPrediction
-              }
-            >
-              <div className="form-section">
-                <h3>
-                  Transaction Information
-                </h3>
+            {autoAmountFeatureLoading ? (
+              <div className="explanation-box">
+                <span>
+                  Loading Transaction Intelligence
+                </span>
 
-                <div className="form-grid">
-                  <InputField
-                    label="Category Code"
-                    name="category"
-                    value={
-                      amountForm.category
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.category
-                    }
-                  />
-
-                  <InputField
-                    label="Merchant Code"
-                    name="merchant"
-                    value={
-                      amountForm.merchant
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.merchant
-                    }
-                  />
-
-                  <InputField
-                    label="Payment Method Code"
-                    name="payment_method"
-                    value={
-                      amountForm.payment_method
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.payment_method
-                    }
-                  />
-
-                  <InputField
-                    label="Location Code"
-                    name="location"
-                    value={
-                      amountForm.location
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.location
-                    }
-                  />
-                </div>
+                <p>
+                  Preparing automatic amount-prediction
+                  features from your saved transaction
+                  history...
+                </p>
               </div>
+            ) : (
+              <>
+                {autoAmountFeatureError && (
+                  <div className="error-box">
+                    {autoAmountFeatureError}
+                  </div>
+                )}
 
-              <div className="form-section">
-                <h3>
-                  Time Behaviour
-                </h3>
+                {!transactionData && (
+                  <div className="result-placeholder">
+                    <div className="result-icon">
+                      Rs
+                    </div>
 
-                <div className="form-grid">
-                  <InputField
-                    label="Month"
-                    name="month"
-                    value={
-                      amountForm.month
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.month
-                    }
-                    min="1"
-                    max="12"
-                  />
+                    <h3>
+                      No Saved Transaction
+                    </h3>
 
-                  <InputField
-                    label="Day"
-                    name="day"
-                    value={
-                      amountForm.day
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.day
-                    }
-                    min="1"
-                    max="31"
-                  />
+                    <p>
+                      Save a transaction using Receipt
+                      OCR or transaction management
+                      before generating an automatic
+                      amount prediction.
+                    </p>
+                  </div>
+                )}
 
-                  <label>
-                    Is Weekend
+                {transactionData && (
+                  <>
+                    <div className="form-section">
+                      <h3>
+                        Latest Saved Transaction
+                      </h3>
 
-                    <select
-                      name="is_weekend"
-                      value={
-                        amountForm.is_weekend
-                      }
-                      onChange={
-                        handleAmountChange
-                      }
+                      <div className="result-stat-grid">
+                        <div>
+                          <span>
+                            Merchant
+                          </span>
+
+                          <strong>
+                            {
+                              transactionData.merchant
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Latest Amount
+                          </span>
+
+                          <strong>
+                            Rs.{" "}
+                            {Number(
+                              transactionData.amount ||
+                                0
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Category
+                          </span>
+
+                          <strong>
+                            {
+                              transactionData.category
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Date
+                          </span>
+
+                          <strong>
+                            {
+                              transactionData.transaction_date
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Source
+                          </span>
+
+                          <strong>
+                            {
+                              transactionData.source ||
+                              "Manual"
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span>
+                            Transaction ID
+                          </span>
+
+                          <strong>
+                            #
+                            {
+                              transactionData.id
+                            }
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    {featureData && (
+                      <>
+                        <div className="form-section">
+                          <h3>
+                            Automatic Feature Encoding
+                          </h3>
+
+                          <div className="result-stat-grid">
+                            <div>
+                              <span>
+                                Category Code
+                              </span>
+
+                              <strong>
+                                {
+                                  featureData.category ??
+                                  "—"
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Merchant Code
+                              </span>
+
+                              <strong>
+                                {
+                                  featureData.merchant ??
+                                  "—"
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Month
+                              </span>
+
+                              <strong>
+                                {
+                                  featureData.month ??
+                                  "—"
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Day
+                              </span>
+
+                              <strong>
+                                {
+                                  featureData.day ??
+                                  "—"
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Weekend Flag
+                              </span>
+
+                              <strong>
+                                {
+                                  featureData.is_weekend ??
+                                  "—"
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Merchant Frequency
+                              </span>
+
+                              <strong>
+                                {
+                                  featureData.merchant_frequency ??
+                                  "—"
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Category Avg Amount
+                              </span>
+
+                              <strong>
+                                Rs.{" "}
+                                {Number(
+                                  featureData.category_avg_amount ||
+                                    0
+                                ).toLocaleString()}
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Payment Impact
+                              </span>
+
+                              <strong>
+                                {
+                                  featureData.payment_impact ??
+                                  "—"
+                                }
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="form-section">
+                          <h3>
+                            History Quality
+                          </h3>
+
+                          <div className="result-stat-grid">
+                            <div>
+                              <span>
+                                Quality
+                              </span>
+
+                              <strong>
+                                {
+                                  amountHistory?.history_quality ||
+                                  "Not available"
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Saved Transactions
+                              </span>
+
+                              <strong>
+                                {
+                                  amountHistory?.transaction_count ??
+                                  0
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Same Category Count
+                              </span>
+
+                              <strong>
+                                {
+                                  amountHistory?.same_category_count ??
+                                  0
+                                }
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Same Merchant Count
+                              </span>
+
+                              <strong>
+                                {
+                                  amountHistory?.same_merchant_count ??
+                                  0
+                                }
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {amountWarnings.length > 0 && (
+                  <div
+                    className="error-box"
+                    style={{
+                      marginTop: "16px",
+                    }}
+                  >
+                    <strong>
+                      Prediction Data Notice
+                    </strong>
+
+                    <ul
+                      style={{
+                        margin:
+                          "10px 0 0 18px",
+                      }}
                     >
-                      <option value="0">
-                        No
-                      </option>
+                      {amountWarnings.map(
+                        (warning, index) => (
+                          <li key={index}>
+                            {warning}
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  </div>
+                )}
 
-                      <option value="1">
-                        Yes
-                      </option>
-                    </select>
-                  </label>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "12px",
+                    marginTop: "20px",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={
+                      handleAutoAmountPrediction
+                    }
+                    disabled={
+                      amountLoading ||
+                      autoAmountFeatureLoading ||
+                      autoAmountFeatures?.can_predict ===
+                        false ||
+                      !transactionData
+                    }
+                    style={{
+                      flex: 1,
+                    }}
+                  >
+                    {amountLoading
+                      ? "Generating Amount Prediction..."
+                      : "Predict Next Transaction Amount"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={
+                      loadAutoAmountFeatures
+                    }
+                    disabled={
+                      autoAmountFeatureLoading ||
+                      amountLoading
+                    }
+                    style={{
+                      border:
+                        "1px solid #dbe3ef",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                      borderRadius: "9px",
+                      padding: "11px 16px",
+                      fontWeight: "700",
+                      cursor:
+                        autoAmountFeatureLoading ||
+                        amountLoading
+                          ? "not-allowed"
+                          : "pointer",
+                    }}
+                  >
+                    Refresh Live Data
+                  </button>
                 </div>
-              </div>
 
-              <div className="form-section">
-                <h3>
-                  Behavioral Features
-                </h3>
-
-                <div className="form-grid">
-                  <InputField
-                    label="Category Average Amount"
-                    name="category_avg_amount"
-                    value={
-                      amountForm.category_avg_amount
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.category_avg_amount
-                    }
-                    step="0.01"
-                  />
-
-                  <InputField
-                    label="Merchant Frequency"
-                    name="merchant_frequency"
-                    value={
-                      amountForm.merchant_frequency
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.merchant_frequency
-                    }
-                  />
-
-                  <InputField
-                    label="Payment Impact"
-                    name="payment_impact"
-                    value={
-                      amountForm.payment_impact
-                    }
-                    onChange={
-                      handleAmountChange
-                    }
-                    error={
-                      amountValidation.payment_impact
-                    }
-                    step="0.01"
-                  />
-                </div>
-              </div>
-
-              {amountError && (
-                <div className="error-box">
-                  {amountError}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                className="primary-button"
-                disabled={amountLoading}
-              >
-                {amountLoading
-                  ? "Generating Estimate..."
-                  : "Predict Transaction Amount"}
-              </button>
-            </form>
+                {amountError && (
+                  <div
+                    className="error-box"
+                    style={{
+                      marginTop: "16px",
+                    }}
+                  >
+                    {amountError}
+                  </div>
+                )}
+              </>
+            )}
           </section>
 
           <section className="prediction-result-card">
             <p className="eyebrow">
-              AI ESTIMATE
+              AI RESULT
             </p>
 
             <h2>
-              Amount Prediction
+              Amount Forecast
             </h2>
 
             {!amountResult && (
@@ -3731,13 +4717,14 @@ function App() {
                 </div>
 
                 <h3>
-                  Ready to Estimate
+                  Ready for Automatic Prediction
                 </h3>
 
                 <p>
-                  Enter valid transaction
-                  behaviour information to
-                  generate an AI-powered estimate.
+                  The latest saved transaction will
+                  be converted into model features
+                  automatically and evaluated by the
+                  Random Forest amount model.
                 </p>
               </div>
             )}
@@ -3757,70 +4744,149 @@ function App() {
                   </h3>
                 </div>
 
-                <div className="amount-summary">
+                <div className="result-stat-grid">
                   <div>
                     <span>
-                      Category
+                      Latest Amount
                     </span>
 
                     <strong>
-                      {amountForm.category}
+                      Rs.{" "}
+                      {Number(
+                        amountResult.latest_transaction_amount ||
+                          0
+                      ).toLocaleString()}
                     </strong>
                   </div>
 
                   <div>
                     <span>
-                      Merchant
+                      Difference
                     </span>
 
                     <strong>
-                      {amountForm.merchant}
+                      Rs.{" "}
+                      {Number(
+                        amountResult.difference ||
+                          0
+                      ).toLocaleString()}
                     </strong>
                   </div>
 
                   <div>
                     <span>
-                      Payment Method
+                      Difference %
                     </span>
 
                     <strong>
                       {
-                        amountForm.payment_method
+                        amountResult.percentage_difference
+                      }
+                      %
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
+                      Trend
+                    </span>
+
+                    <strong>
+                      {
+                        amountResult.trend
                       }
                     </strong>
                   </div>
 
                   <div>
                     <span>
-                      Location
+                      Model
                     </span>
 
                     <strong>
-                      {amountForm.location}
+                      {
+                        amountResult.model ||
+                        "Random Forest"
+                      }
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
+                      Data Source
+                    </span>
+
+                    <strong>
+                      {
+                        amountResult.source ||
+                        "Saved Transactions"
+                      }
                     </strong>
                   </div>
                 </div>
 
+                <div
+                  className={`trend-badge ${
+                    amountResult.trend ===
+                    "Higher Than Latest"
+                      ? "increase"
+                      : amountResult.trend ===
+                        "Lower Than Latest"
+                      ? "decrease"
+                      : "stable"
+                  }`}
+                >
+                  {
+                    amountResult.trend
+                  }
+                </div>
+
                 <div className="explanation-box">
                   <span>
-                    AI Estimate
+                    AI Explanation
                   </span>
 
                   <p>
-                    Based on the supplied
-                    transaction and behavioural
-                    features, the model predicts
-                    an expected transaction
-                    amount of{" "}
-                    <strong>
-                      Rs.{" "}
-                      {Number(
-                        amountResult.predicted_amount
-                      ).toLocaleString()}
-                    </strong>
-                    .
+                    {
+                      amountResult.explanation
+                    }
                   </p>
                 </div>
+
+                {Array.isArray(
+                  amountResult.warnings
+                ) &&
+                  amountResult.warnings.length >
+                    0 && (
+                    <div
+                      className="error-box"
+                      style={{
+                        marginTop: "16px",
+                      }}
+                    >
+                      <strong>
+                        Prediction Reliability Notice
+                      </strong>
+
+                      <ul
+                        style={{
+                          margin:
+                            "10px 0 0 18px",
+                        }}
+                      >
+                        {amountResult.warnings.map(
+                          (
+                            warning,
+                            index
+                          ) => (
+                            <li key={index}>
+                              {warning}
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+                  )}
               </div>
             )}
           </section>
