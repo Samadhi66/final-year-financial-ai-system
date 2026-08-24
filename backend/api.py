@@ -17,6 +17,7 @@ from transaction_store import (
     get_latest_transaction,
     get_transaction_summary,
     delete_transaction,
+    update_transaction,
 )
 
 
@@ -38,7 +39,7 @@ app = FastAPI(
         "Smart Budget Prediction, Behavioral Fraud Detection, "
         "Amount Prediction, Receipt OCR and Transaction Management API"
     ),
-    version="2.6",
+    version="2.7",
 )
 
 
@@ -225,6 +226,15 @@ class TransactionInput(BaseModel):
     raw_ocr_text: str | None = None
 
 
+class TransactionUpdateInput(BaseModel):
+    merchant: str
+    amount: float
+    transaction_date: str
+    category: str
+    source: str = "Manual"
+    raw_ocr_text: str | None = None
+
+
 class AutoFraudTransactionInput(BaseModel):
     amount: float
     category: str
@@ -284,7 +294,7 @@ def home():
     return {
         "message": "Financial AI API Running",
         "system": "AI-Powered Financial Intelligence System",
-        "version": "2.6",
+        "version": "2.7",
         "modules": [
             "Smart Budget Prediction",
             "Behavioral Fraud Detection",
@@ -293,6 +303,7 @@ def home():
             "Transaction Management",
             "Automatic Fraud Analysis",
             "Transaction Deletion",
+            "Transaction Editing",
         ],
     }
 
@@ -998,7 +1009,126 @@ def latest_transaction():
 
 
 # ============================================================
-# 17. DELETE TRANSACTION
+# 17. UPDATE TRANSACTION
+# ============================================================
+
+@app.put("/transactions/{transaction_id}")
+def edit_transaction(
+    transaction_id: int,
+    transaction: TransactionUpdateInput
+):
+    if transaction_id <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Transaction ID must be "
+                "greater than 0."
+            ),
+        )
+
+    merchant = transaction.merchant.strip()
+    transaction_date = (
+        transaction.transaction_date.strip()
+    )
+    category = transaction.category.strip()
+    source = transaction.source.strip()
+
+    if not merchant:
+        raise HTTPException(
+            status_code=400,
+            detail="Merchant is required.",
+        )
+
+    if transaction.amount <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Transaction amount must be greater than 0."
+            ),
+        )
+
+    if not transaction_date:
+        raise HTTPException(
+            status_code=400,
+            detail="Transaction date is required.",
+        )
+
+    if not category:
+        raise HTTPException(
+            status_code=400,
+            detail="Category is required.",
+        )
+
+    if not source:
+        source = "Manual"
+
+    try:
+        result = update_transaction(
+            transaction_id=transaction_id,
+            merchant=merchant,
+            amount=transaction.amount,
+            transaction_date=transaction_date,
+            category=category,
+            source=source,
+            raw_ocr_text=transaction.raw_ocr_text,
+        )
+
+        if not result.get("found"):
+            raise HTTPException(
+                status_code=404,
+                detail="Transaction not found.",
+            )
+
+        if result.get("duplicate"):
+            return {
+                "status": "Duplicate",
+                "message": (
+                    "Another transaction already has "
+                    "the same merchant, amount, date "
+                    "and category. Update was not saved."
+                ),
+                "duplicate": True,
+                "transaction":
+                    result.get(
+                        "duplicate_transaction"
+                    ),
+            }
+
+        return {
+            "status": "Success",
+            "message": (
+                "Transaction updated successfully."
+            ),
+            "duplicate": False,
+            "transaction_id":
+                result.get(
+                    "transaction_id"
+                ),
+            "transaction":
+                result.get(
+                    "transaction"
+                ),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print(
+            "Transaction update error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not update transaction."
+            ),
+        )
+
+
+# ============================================================
+# 18. DELETE TRANSACTION
 # ============================================================
 
 @app.delete("/transactions/{transaction_id}")
@@ -1060,7 +1190,7 @@ def remove_transaction(
 
 
 # ============================================================
-# 18. LATEST TRANSACTION FRAUD ANALYSIS
+# 19. LATEST TRANSACTION FRAUD ANALYSIS
 # ============================================================
 
 @app.get("/transactions/latest/fraud")
@@ -1115,7 +1245,7 @@ def latest_transaction_fraud():
 
 
 # ============================================================
-# 19. TRANSACTION SUMMARY
+# 20. TRANSACTION SUMMARY
 # ============================================================
 
 @app.get("/transactions/summary")
@@ -1145,7 +1275,7 @@ def transaction_summary():
 
 
 # ============================================================
-# 20. MODEL INFORMATION ENDPOINT
+# 21. MODEL INFORMATION ENDPOINT
 # ============================================================
 
 @app.get("/model_info")
@@ -1230,6 +1360,9 @@ def model_info():
                 "List transactions",
                 "Latest transaction",
                 "Transaction summary",
+                "Edit transaction",
+                "Delete transaction",
+                "Duplicate protection",
             ],
         },
     }

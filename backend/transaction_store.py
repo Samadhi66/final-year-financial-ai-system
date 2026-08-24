@@ -79,40 +79,75 @@ def find_duplicate_transaction(
     merchant,
     amount,
     transaction_date,
-    category
+    category,
+    exclude_id=None
 ):
 
     connection = get_connection()
 
     cursor = connection.cursor()
 
-    cursor.execute(
-        """
-        SELECT
-            id,
-            merchant,
-            amount,
-            transaction_date,
-            category,
-            source,
-            raw_ocr_text,
-            created_at
-        FROM transactions
-        WHERE
-            LOWER(TRIM(merchant)) = LOWER(TRIM(?))
-            AND ROUND(amount, 2) = ROUND(?, 2)
-            AND TRIM(transaction_date) = TRIM(?)
-            AND LOWER(TRIM(category)) = LOWER(TRIM(?))
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (
-            merchant,
-            float(amount),
-            transaction_date,
-            category
+    if exclude_id is None:
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                merchant,
+                amount,
+                transaction_date,
+                category,
+                source,
+                raw_ocr_text,
+                created_at
+            FROM transactions
+            WHERE
+                LOWER(TRIM(merchant)) = LOWER(TRIM(?))
+                AND ROUND(amount, 2) = ROUND(?, 2)
+                AND TRIM(transaction_date) = TRIM(?)
+                AND LOWER(TRIM(category)) = LOWER(TRIM(?))
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                merchant,
+                float(amount),
+                transaction_date,
+                category
+            )
         )
-    )
+
+    else:
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                merchant,
+                amount,
+                transaction_date,
+                category,
+                source,
+                raw_ocr_text,
+                created_at
+            FROM transactions
+            WHERE
+                LOWER(TRIM(merchant)) = LOWER(TRIM(?))
+                AND ROUND(amount, 2) = ROUND(?, 2)
+                AND TRIM(transaction_date) = TRIM(?)
+                AND LOWER(TRIM(category)) = LOWER(TRIM(?))
+                AND id != ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (
+                merchant,
+                float(amount),
+                transaction_date,
+                category,
+                int(exclude_id)
+            )
+        )
 
     row = cursor.fetchone()
 
@@ -273,6 +308,137 @@ def get_latest_transaction():
         return None
 
     return dict(row)
+
+
+# ============================================================
+# UPDATE TRANSACTION
+# ============================================================
+
+def update_transaction(
+    transaction_id,
+    merchant,
+    amount,
+    transaction_date,
+    category,
+    source="Manual",
+    raw_ocr_text=None
+):
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            merchant,
+            amount,
+            transaction_date,
+            category,
+            source,
+            raw_ocr_text,
+            created_at
+        FROM transactions
+        WHERE id = ?
+        """,
+        (
+            int(transaction_id),
+        )
+    )
+
+    existing_transaction = (
+        cursor.fetchone()
+    )
+
+    connection.close()
+
+    if existing_transaction is None:
+        return {
+            "updated": False,
+            "found": False,
+            "duplicate": False,
+            "transaction": None
+        }
+
+    duplicate = find_duplicate_transaction(
+        merchant=merchant,
+        amount=amount,
+        transaction_date=transaction_date,
+        category=category,
+        exclude_id=transaction_id
+    )
+
+    if duplicate is not None:
+        return {
+            "updated": False,
+            "found": True,
+            "duplicate": True,
+            "duplicate_transaction":
+                duplicate
+        }
+
+    connection = get_connection()
+
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        UPDATE transactions
+        SET
+            merchant = ?,
+            amount = ?,
+            transaction_date = ?,
+            category = ?,
+            source = ?,
+            raw_ocr_text = ?
+        WHERE id = ?
+        """,
+        (
+            merchant,
+            float(amount),
+            transaction_date,
+            category,
+            source,
+            raw_ocr_text,
+            int(transaction_id)
+        )
+    )
+
+    connection.commit()
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            merchant,
+            amount,
+            transaction_date,
+            category,
+            source,
+            raw_ocr_text,
+            created_at
+        FROM transactions
+        WHERE id = ?
+        """,
+        (
+            int(transaction_id),
+        )
+    )
+
+    updated_row = cursor.fetchone()
+
+    connection.close()
+
+    return {
+        "updated": True,
+        "found": True,
+        "duplicate": False,
+        "transaction_id":
+            int(transaction_id),
+        "transaction":
+            dict(updated_row)
+    }
 
 
 # ============================================================
