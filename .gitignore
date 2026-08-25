@@ -28,3 +28,23 @@ Thumbs.db
 
 # Local database
 backend/financial_ai.db
+
+# Python cache / compiled files
+__pycache__/
+*.py[cod]
+*.class
+
+# Python tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Experimental budget model artifacts
+backend/models/budget_feature_engineering_candidate.pkl
+backend/models/budget_feature_engineering_candidate_features.pkl
+backend/models/budget_gradient_boosting_tuned.pkl
+backend/models/budget_gradient_boosting_tuned_features.pkl

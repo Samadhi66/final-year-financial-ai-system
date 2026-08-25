@@ -1,5 +1,6 @@
+import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 import math
 
@@ -41,7 +42,7 @@ app = FastAPI(
         "Smart Budget Prediction, Behavioral Fraud Detection, "
         "Amount Prediction, Receipt OCR and Transaction Management API"
     ),
-    version="3.0",
+    version="3.1",
 )
 
 
@@ -243,6 +244,10 @@ class AutoFraudTransactionInput(BaseModel):
     merchant: str
     payment_method: int = 0
     location: int = 0
+
+
+class VoiceExpenseInput(BaseModel):
+    transcript: str
 
 
 # ============================================================
@@ -829,6 +834,246 @@ def build_auto_budget_features():
 
 
 # ============================================================
+# VOICE EXPENSE PARSING HELPERS
+# ============================================================
+
+VOICE_CATEGORY_KEYWORDS = {
+    "Groceries": [
+        "grocery", "groceries", "supermarket", "food city",
+        "keells", "cargills", "arpico"
+    ],
+    "Food & Dining": [
+        "restaurant", "dining", "lunch", "dinner", "breakfast",
+        "pizza", "kfc", "burger", "cafe", "coffee", "food"
+    ],
+    "Transport": [
+        "uber", "pickme", "taxi", "bus", "train", "fuel",
+        "petrol", "diesel", "transport"
+    ],
+    "Utilities": [
+        "electricity", "water bill", "dialog", "mobitel",
+        "internet", "wifi", "utility", "utilities", "ceylon electricity",
+        "ceb"
+    ],
+    "Shopping": [
+        "shopping", "clothes", "clothing", "shirt", "shoes",
+        "mall", "store"
+    ],
+    "Entertainment": [
+        "movie", "cinema", "netflix", "spotify", "game",
+        "entertainment"
+    ],
+    "Healthcare": [
+        "pharmacy", "hospital", "doctor", "medicine", "medical",
+        "healthcare", "healthguard"
+    ],
+    "Education": [
+        "course", "class", "tuition", "book", "education",
+        "university", "campus"
+    ],
+    "Travel": [
+        "hotel", "flight", "air ticket", "travel", "holiday",
+        "trip"
+    ],
+}
+
+
+def infer_voice_category(text: str) -> str:
+    lowered = text.lower()
+
+    for category, keywords in VOICE_CATEGORY_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in lowered:
+                return category
+
+    return "Other"
+
+
+def clean_voice_merchant(value: str) -> str:
+    merchant = re.sub(
+        r"\b(for|on|today|yesterday|this morning|this evening|this afternoon)\b.*$",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+
+    merchant = re.sub(
+        r"\b(groceries|grocery|food|dining|transport|shopping|utilities|healthcare|education|travel|entertainment)\b.*$",
+        "",
+        merchant,
+        flags=re.IGNORECASE,
+    )
+
+    merchant = merchant.strip(" ,.-")
+
+    return merchant[:120]
+
+
+def parse_voice_expense_text(transcript: str):
+    text = str(transcript or "").strip()
+
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail="Voice transcript is empty.",
+        )
+
+    amount = None
+
+    amount_patterns = [
+        r"(?:rs\.?|lkr|rupees?)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+        r"([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(?:rs\.?|lkr|rupees?)",
+        r"(?:spent|paid|expense|cost|costs|was)\s*(?:rs\.?|lkr|rupees?)?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
+    ]
+
+    for pattern in amount_patterns:
+        match = re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            try:
+                amount = float(
+                    match.group(1).replace(",", "")
+                )
+                break
+            except ValueError:
+                pass
+
+    if amount is None:
+        generic_numbers = re.findall(
+            r"\b[0-9][0-9,]*(?:\.[0-9]{1,2})?\b",
+            text,
+        )
+
+        for candidate in generic_numbers:
+            try:
+                value = float(
+                    candidate.replace(",", "")
+                )
+            except ValueError:
+                continue
+
+            # Ignore likely dates/years and tiny counters.
+            if value >= 10 and value <= 10000000:
+                amount = value
+                break
+
+    merchant = ""
+
+    merchant_patterns = [
+        r"\bat\s+(.+?)(?=\s+for\b|\s+on\b|\s+today\b|\s+yesterday\b|$)",
+        r"\bfrom\s+(.+?)(?=\s+for\b|\s+on\b|\s+today\b|\s+yesterday\b|$)",
+        r"\bto\s+(.+?)(?=\s+for\b|\s+on\b|\s+today\b|\s+yesterday\b|$)",
+    ]
+
+    for pattern in merchant_patterns:
+        match = re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+            merchant = clean_voice_merchant(
+                match.group(1)
+            )
+            if merchant:
+                break
+
+    known_merchants = [
+        "CARGILLS FOOD CITY",
+        "KEELLS SUPERMARKET",
+        "HEALTHGUARD PHARMACY",
+        "PIZZA HUT",
+        "PICKME",
+        "UBER",
+        "DIALOG",
+        "MOBITEL",
+        "KFC",
+        "CEB",
+    ]
+
+    if not merchant:
+        lowered = text.lower()
+
+        for known in known_merchants:
+            if known.lower() in lowered:
+                merchant = known
+                break
+
+    if not merchant:
+        merchant = "Unknown Merchant"
+
+    category = infer_voice_category(text)
+
+    transaction_date = datetime.now().strftime(
+        "%d/%m/%Y"
+    )
+
+    explicit_date = re.search(
+        r"\b([0-3]?\d)[/-]([01]?\d)[/-](20\d{2})\b",
+        text,
+    )
+
+    if explicit_date:
+        try:
+            parsed = datetime(
+                int(explicit_date.group(3)),
+                int(explicit_date.group(2)),
+                int(explicit_date.group(1)),
+            )
+
+            transaction_date = parsed.strftime(
+                "%d/%m/%Y"
+            )
+        except ValueError:
+            pass
+    elif re.search(
+        r"\byesterday\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        transaction_date = (
+            datetime.now() - timedelta(days=1)
+        ).strftime("%d/%m/%Y")
+
+    warnings = []
+
+    if amount is None or amount <= 0:
+        warnings.append(
+            "Amount could not be confidently detected. Please enter it manually."
+        )
+
+    if merchant == "Unknown Merchant":
+        warnings.append(
+            "Merchant could not be confidently detected. Please review it before saving."
+        )
+
+    if category == "Other":
+        warnings.append(
+            "Expense category was not clear, so it was classified as Other."
+        )
+
+    return {
+        "status": "Success",
+        "transcript": text,
+        "merchant": merchant,
+        "amount": (
+            round(float(amount), 2)
+            if amount is not None
+            else None
+        ),
+        "transaction_date": transaction_date,
+        "category": category,
+        "source": "Voice",
+        "warnings": warnings,
+    }
+
+
+# ============================================================
 # AUTO AMOUNT PREDICTION HELPERS
 # ============================================================
 
@@ -1039,7 +1284,7 @@ def home():
     return {
         "message": "Financial AI API Running",
         "system": "AI-Powered Financial Intelligence System",
-        "version": "3.0",
+        "version": "3.1",
         "modules": [
             "Smart Budget Prediction",
             "Behavioral Fraud Detection",
@@ -1052,6 +1297,7 @@ def home():
             "Advanced Input Validation",
             "Automatic Budget Forecasting",
             "Automatic Amount Prediction",
+            "Voice Expense Entry",
         ],
     }
 
@@ -1112,6 +1358,34 @@ def predict_amount(data: PredictionInput):
             "error": str(error),
         }
 
+
+
+# ============================================================
+# 10. VOICE EXPENSE PARSING ENDPOINT
+# ============================================================
+
+@app.post("/voice/parse-expense")
+def parse_voice_expense(data: VoiceExpenseInput):
+    try:
+        return parse_voice_expense_text(
+            data.transcript
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print(
+            "Voice expense parsing error:",
+            error,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Voice expense could not be parsed."
+            ),
+        )
 
 
 # ============================================================

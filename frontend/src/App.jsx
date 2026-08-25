@@ -244,6 +244,41 @@ function App() {
     useState("");
 
   /* =======================================================
+     VOICE EXPENSE STATE
+     ======================================================= */
+
+  const [voiceTranscript, setVoiceTranscript] =
+    useState("");
+
+  const [voiceListening, setVoiceListening] =
+    useState(false);
+
+  const [voiceParsing, setVoiceParsing] =
+    useState(false);
+
+  const [voiceParsedExpense, setVoiceParsedExpense] =
+    useState(null);
+
+  const [voiceError, setVoiceError] =
+    useState("");
+
+  const [voiceWarnings, setVoiceWarnings] =
+    useState([]);
+
+  const [voiceSaving, setVoiceSaving] =
+    useState(false);
+
+  const [voiceSavedTransaction, setVoiceSavedTransaction] =
+    useState(null);
+
+  const [voiceForm, setVoiceForm] = useState({
+    merchant: "",
+    amount: "",
+    transaction_date: "",
+    category: "Other",
+  });
+
+  /* =======================================================
      RECEIPT OCR STATE
      ======================================================= */
 
@@ -1718,6 +1753,8 @@ function App() {
     setDeletingTransactionId(transaction.id);
     setTransactionDeleteMessage("");
     setTransactionDeleteError("");
+    setTransactionEditMessage("");
+    setTransactionEditError("");
 
     try {
       const response = await fetch(
@@ -1903,6 +1940,285 @@ function App() {
       loadLatestFraudAnalysis();
     }
   }, [activePage]);
+
+  /* =======================================================
+     VOICE EXPENSE API
+     ======================================================= */
+
+  const startVoiceRecognition = () => {
+    setVoiceError("");
+    setVoiceSavedTransaction(null);
+
+    const SpeechRecognition =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setVoiceError(
+        "Voice recognition is not supported by this browser. You can type the sentence manually in the transcript box."
+      );
+      return;
+    }
+
+    const recognition =
+      new SpeechRecognition();
+
+    recognition.lang = "en-LK";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+
+    recognition.onstart = () => {
+      setVoiceListening(true);
+    };
+
+    recognition.onresult = (event) => {
+      const transcript =
+        event.results?.[0]?.[0]
+          ?.transcript || "";
+
+      setVoiceTranscript(
+        transcript
+      );
+
+      setVoiceParsedExpense(null);
+      setVoiceWarnings([]);
+    };
+
+    recognition.onerror = (event) => {
+      setVoiceError(
+        `Voice recognition error: ${
+          event.error || "unknown error"
+        }. You can also type the expense sentence manually.`
+      );
+    };
+
+    recognition.onend = () => {
+      setVoiceListening(false);
+    };
+
+    recognition.start();
+  };
+
+  const parseVoiceExpense = async () => {
+    const transcript =
+      voiceTranscript.trim();
+
+    if (!transcript) {
+      setVoiceError(
+        "Please record or type an expense sentence first."
+      );
+      return;
+    }
+
+    setVoiceParsing(true);
+    setVoiceError("");
+    setVoiceSavedTransaction(null);
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/voice/parse-expense",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            transcript,
+          }),
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            "Voice expense could not be parsed."
+        );
+      }
+
+      setVoiceParsedExpense(
+        result
+      );
+
+      setVoiceWarnings(
+        Array.isArray(result.warnings)
+          ? result.warnings
+          : []
+      );
+
+      setVoiceForm({
+        merchant:
+          result.merchant || "",
+        amount:
+          result.amount !== null &&
+          result.amount !== undefined
+            ? String(result.amount)
+            : "",
+        transaction_date:
+          result.transaction_date ||
+          "",
+        category:
+          result.category ||
+          "Other",
+      });
+    } catch (error) {
+      console.error(error);
+
+      setVoiceError(
+        error.message ||
+          "Voice expense parsing could not be completed."
+      );
+    } finally {
+      setVoiceParsing(false);
+    }
+  };
+
+  const handleVoiceFormChange = (
+    event
+  ) => {
+    const { name, value } =
+      event.target;
+
+    setVoiceForm((previous) => ({
+      ...previous,
+      [name]: value,
+    }));
+
+    setVoiceError("");
+    setVoiceSavedTransaction(null);
+  };
+
+  const saveVoiceExpense = async () => {
+    const errors =
+      validateTransactionValues({
+        merchant:
+          voiceForm.merchant,
+        amount:
+          voiceForm.amount,
+        transaction_date:
+          voiceForm.transaction_date,
+        category:
+          voiceForm.category,
+      });
+
+    if (
+      Object.keys(errors).length > 0
+    ) {
+      setVoiceError(
+        Object.values(errors)[0]
+      );
+      return;
+    }
+
+    const payload = {
+      merchant:
+        voiceForm.merchant.trim(),
+      amount:
+        Number(voiceForm.amount),
+      transaction_date:
+        voiceForm.transaction_date.trim(),
+      category:
+        voiceForm.category.trim(),
+      source: "Voice",
+      raw_ocr_text:
+        voiceTranscript.trim(),
+    };
+
+    setVoiceSaving(true);
+    setVoiceError("");
+
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/transactions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify(
+            payload
+          ),
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.detail ||
+            result.message ||
+            `Server returned ${response.status}`
+        );
+      }
+
+      if (result.status === "Duplicate") {
+        throw new Error(
+          result.message ||
+            "This transaction is already saved."
+        );
+      }
+
+      if (result.status !== "Success") {
+        throw new Error(
+          result.message ||
+            "Voice expense could not be saved."
+        );
+      }
+
+      setVoiceSavedTransaction({
+        ...payload,
+        transaction_id:
+          result.transaction_id,
+      });
+
+      await runAutoFraudAnalysis({
+        amount:
+          payload.amount,
+        category:
+          payload.category,
+        merchant:
+          payload.merchant,
+      });
+
+      await loadTransactionDashboard();
+    } catch (error) {
+      console.error(error);
+
+      setVoiceError(
+        error.message ||
+          "Voice expense could not be saved."
+      );
+    } finally {
+      setVoiceSaving(false);
+    }
+  };
+
+  const resetVoiceExpense = () => {
+    setVoiceTranscript("");
+    setVoiceParsedExpense(null);
+    setVoiceWarnings([]);
+    setVoiceError("");
+    setVoiceSavedTransaction(null);
+    setVoiceForm({
+      merchant: "",
+      amount: "",
+      transaction_date: "",
+      category: "Other",
+    });
+  };
 
   /* =======================================================
      RECEIPT OCR API
@@ -2386,7 +2702,7 @@ function App() {
               marginBottom: "20px",
             }}
           >
-            <span>Transaction Updated</span>
+            <span>Transaction Deleted</span>
             <p>{transactionDeleteMessage}</p>
           </div>
         )}
@@ -4899,6 +5215,412 @@ function App() {
      RECEIPT OCR PAGE
      ======================================================= */
 
+  const renderVoiceExpense = () => {
+    return (
+      <>
+        <header>
+          <div>
+            <p className="eyebrow">
+              VOICE-POWERED EXPENSE ENTRY
+            </p>
+
+            <h1>
+              Voice Expense Entry
+            </h1>
+
+            <p className="subtitle">
+              Speak or type a natural expense sentence,
+              review the extracted transaction details,
+              and save it directly to the financial
+              intelligence system.
+            </p>
+          </div>
+
+          <div className="system-status">
+            <span className="status-dot"></span>
+            Voice Entry Ready
+          </div>
+        </header>
+
+        <div className="prediction-layout">
+          <section className="prediction-form-card">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">
+                  VOICE INPUT
+                </p>
+
+                <h2>
+                  Record Expense
+                </h2>
+              </div>
+
+              <span className="model-chip">
+                Speech to Transaction
+              </span>
+            </div>
+
+            <div className="form-section">
+              <h3>
+                Expense Sentence
+              </h3>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: "10px",
+                  flexWrap: "wrap",
+                  marginBottom: "12px",
+                }}
+              >
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={
+                    startVoiceRecognition
+                  }
+                  disabled={
+                    voiceListening ||
+                    voiceParsing ||
+                    voiceSaving
+                  }
+                  style={{
+                    flex: 1,
+                  }}
+                >
+                  {voiceListening
+                    ? "Listening..."
+                    : "🎤 Start Voice Recording"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={
+                    resetVoiceExpense
+                  }
+                  disabled={
+                    voiceListening ||
+                    voiceSaving
+                  }
+                  style={{
+                    border:
+                      "1px solid #dbe3ef",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    borderRadius: "9px",
+                    padding: "11px 16px",
+                    fontWeight: "700",
+                    cursor: "pointer",
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+
+              <label
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                  fontWeight: "700",
+                  fontSize: "12px",
+                }}
+              >
+                Transcript
+                <textarea
+                  value={
+                    voiceTranscript
+                  }
+                  onChange={(event) => {
+                    setVoiceTranscript(
+                      event.target.value
+                    );
+                    setVoiceParsedExpense(
+                      null
+                    );
+                    setVoiceSavedTransaction(
+                      null
+                    );
+                  }}
+                  placeholder='Example: "I spent 2500 rupees at Keells Supermarket for groceries today."'
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    resize: "vertical",
+                    border:
+                      "1px solid #dbe3ef",
+                    borderRadius: "10px",
+                    padding: "12px",
+                    font: "inherit",
+                    lineHeight: 1.5,
+                  }}
+                />
+              </label>
+
+              <button
+                type="button"
+                className="primary-button"
+                onClick={
+                  parseVoiceExpense
+                }
+                disabled={
+                  voiceParsing ||
+                  voiceListening ||
+                  !voiceTranscript.trim()
+                }
+                style={{
+                  width: "100%",
+                  marginTop: "14px",
+                }}
+              >
+                {voiceParsing
+                  ? "Extracting Transaction Details..."
+                  : "Extract Expense Details"}
+              </button>
+            </div>
+
+            {voiceError && (
+              <div className="error-box">
+                {voiceError}
+              </div>
+            )}
+
+            {voiceWarnings.length > 0 && (
+              <div className="error-box">
+                <strong>
+                  Voice Parsing Notice
+                </strong>
+
+                <ul
+                  style={{
+                    margin:
+                      "10px 0 0 18px",
+                  }}
+                >
+                  {voiceWarnings.map(
+                    (warning, index) => (
+                      <li key={index}>
+                        {warning}
+                      </li>
+                    )
+                  )}
+                </ul>
+              </div>
+            )}
+          </section>
+
+          <section className="prediction-result-card">
+            <p className="eyebrow">
+              EXTRACTED TRANSACTION
+            </p>
+
+            <h2>
+              Review & Save
+            </h2>
+
+            {!voiceParsedExpense && (
+              <div className="result-placeholder">
+                <div className="result-icon">
+                  AI
+                </div>
+
+                <h3>
+                  Ready for Voice Input
+                </h3>
+
+                <p>
+                  Record or type an expense sentence
+                  to automatically extract merchant,
+                  amount, date and category.
+                </p>
+              </div>
+            )}
+
+            {voiceParsedExpense && (
+              <div className="result-content">
+                <div className="form-section">
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(2, minmax(0, 1fr))",
+                      gap: "12px",
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: "flex",
+                        flexDirection:
+                          "column",
+                        gap: "7px",
+                        fontSize: "12px",
+                        fontWeight: "700",
+                      }}
+                    >
+                      Merchant
+                      <input
+                        type="text"
+                        name="merchant"
+                        value={
+                          voiceForm.merchant
+                        }
+                        onChange={
+                          handleVoiceFormChange
+                        }
+                      />
+                    </label>
+
+                    <label
+                      style={{
+                        display: "flex",
+                        flexDirection:
+                          "column",
+                        gap: "7px",
+                        fontSize: "12px",
+                        fontWeight: "700",
+                      }}
+                    >
+                      Amount
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        name="amount"
+                        value={
+                          voiceForm.amount
+                        }
+                        onChange={
+                          handleVoiceFormChange
+                        }
+                      />
+                    </label>
+
+                    <label
+                      style={{
+                        display: "flex",
+                        flexDirection:
+                          "column",
+                        gap: "7px",
+                        fontSize: "12px",
+                        fontWeight: "700",
+                      }}
+                    >
+                      Date
+                      <input
+                        type="text"
+                        name="transaction_date"
+                        placeholder="DD/MM/YYYY"
+                        value={
+                          voiceForm.transaction_date
+                        }
+                        onChange={
+                          handleVoiceFormChange
+                        }
+                      />
+                    </label>
+
+                    <label
+                      style={{
+                        display: "flex",
+                        flexDirection:
+                          "column",
+                        gap: "7px",
+                        fontSize: "12px",
+                        fontWeight: "700",
+                      }}
+                    >
+                      Category
+                      <select
+                        name="category"
+                        value={
+                          voiceForm.category
+                        }
+                        onChange={
+                          handleVoiceFormChange
+                        }
+                      >
+                        {transactionCategories.map(
+                          (category) => (
+                            <option
+                              key={
+                                category
+                              }
+                              value={
+                                category
+                              }
+                            >
+                              {
+                                category
+                              }
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="explanation-box">
+                  <span>
+                    Voice Confirmation
+                  </span>
+
+                  <p>
+                    Review the extracted values before
+                    saving. You can edit any field if
+                    speech recognition or parsing was
+                    not exact.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={
+                    saveVoiceExpense
+                  }
+                  disabled={
+                    voiceSaving
+                  }
+                  style={{
+                    width: "100%",
+                    marginTop: "14px",
+                  }}
+                >
+                  {voiceSaving
+                    ? "Saving Expense..."
+                    : "Confirm & Save Voice Expense"}
+                </button>
+
+                {voiceSavedTransaction && (
+                  <div
+                    className="explanation-box"
+                    style={{
+                      marginTop: "14px",
+                    }}
+                  >
+                    <span>
+                      Transaction Saved
+                    </span>
+
+                    <p>
+                      Voice expense saved successfully
+                      as transaction #
+                      {
+                        voiceSavedTransaction.transaction_id
+                      }. Dashboard and AI insights have
+                      been refreshed.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
+      </>
+    );
+  };
+
   const renderReceiptOcr = () => {
     return (
       <>
@@ -5246,6 +5968,10 @@ function App() {
 
     if (activePage === "amount") {
       return renderAmountPrediction();
+    }
+
+    if (activePage === "voice") {
+      return renderVoiceExpense();
     }
 
     if (activePage === "ocr") {

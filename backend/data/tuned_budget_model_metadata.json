@@ -1,0 +1,41 @@
+{
+    "model": "Gradient Boosting",
+    "best_parameters": {
+        "subsample": 0.7,
+        "n_estimators": 500,
+        "min_samples_split": 8,
+        "min_samples_leaf": 1,
+        "max_features": "sqrt",
+        "max_depth": 4,
+        "loss": "huber",
+        "learning_rate": 0.05
+    },
+    "features": [
+        "current_week_spending",
+        "spending_1_week_ago",
+        "spending_2_weeks_ago",
+        "spending_3_weeks_ago",
+        "spending_4_weeks_ago",
+        "previous_2_week_avg",
+        "previous_4_week_avg",
+        "previous_8_week_avg",
+        "current_transaction_count",
+        "current_avg_transaction_amount",
+        "current_fraud_count",
+        "previous_transaction_count",
+        "previous_avg_transaction_amount",
+        "spending_change",
+        "spending_change_percentage",
+        "week_sin",
+        "week_cos"
+    ],
+    "training_samples": 143,
+    "testing_samples": 36,
+    "metrics": {
+        "cv_r2_mean": 0.23982080470493256,
+        "cv_r2_std": 0.13485582529412535,
+        "test_r2": 0.5281027881022156,
+        "test_rmse": 5908.033941072343,
+        "test_mae": 4832.818773839701
+    }
+}
